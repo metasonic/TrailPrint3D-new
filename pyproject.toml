@@ -1,0 +1,14 @@
+[project]
+name = "app"
+version = "0.1.0"
+description = "TrailPrint3D Web Application"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiofiles>=25.1.0",
+    "bpy>=5.0.1",
+    "fastapi>=0.136.1",
+    "jinja2>=3.1.6",
+    "python-multipart>=0.0.28",
+    "uvicorn>=0.47.0",
+]
