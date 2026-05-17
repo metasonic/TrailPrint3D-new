@@ -1,0 +1,9 @@
+1. Audit and architecture:
+- Decide Option A (headless Blender `bpy`).
+- Define API (FastAPI) and env vars.
+2. Backend API:
+- Create FastAPI endpoints `/upload`, `/preview`, `/generate`, `/download`.
+3. Frontend:
+- Create a basic HTML/JS UI (Vue or React or vanilla) using three.js for preview.
+4. Docker:
+- Create Dockerfile using python:3.11-slim, installing necessary libs and `bpy==5.0.1`.

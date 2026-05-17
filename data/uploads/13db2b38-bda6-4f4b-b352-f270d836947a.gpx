@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Sample">
+  <trk>
+    <name>Sample Track</name>
+    <trkseg>
+      <trkpt lat="47.6097" lon="-122.3331"><ele>20</ele></trkpt>
+      <trkpt lat="47.6098" lon="-122.3332"><ele>21</ele></trkpt>
+      <trkpt lat="47.6099" lon="-122.3333"><ele>22</ele></trkpt>
+      <trkpt lat="47.6100" lon="-122.3334"><ele>23</ele></trkpt>
+    </trkseg>
+  </trk>
+</gpx>
