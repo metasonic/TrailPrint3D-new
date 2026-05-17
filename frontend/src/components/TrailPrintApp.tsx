@@ -38,6 +38,8 @@ const DEFAULT_SETTINGS: GenerationSettings = {
   roads_small: false,
 };
 
+const MAX_POLL_ATTEMPTS = 300; // 10 minutes at 2 s interval
+
 function useDebounce<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -68,6 +70,8 @@ export default function TrailPrintApp() {
   const exportGenRef = useRef(0);
   // Track which fileId has already had its initial preview triggered
   const lastPreviewedFileIdRef = useRef<string | null>(null);
+  // React ref for the hidden file input (avoids getElementById)
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handlePreview = useCallback(async (fid: string, s: GenerationSettings) => {
     previewAbortRef.current?.abort();
@@ -109,6 +113,10 @@ export default function TrailPrintApp() {
     setPreviewError(null);
     setGlbUrl(null);
     setJobStatus(null);
+    // Reset loading immediately — if a previous request was aborted its finally
+    // block won't fire setPreviewLoading(false), so we must reset it here.
+    setPreviewLoading(false);
+    previewAbortRef.current?.abort();
     try {
       const res = await uploadFile(file);
       setFileId(res.file_id);
@@ -153,17 +161,29 @@ export default function TrailPrintApp() {
 
       setJobStatus((s) => (s ? { ...s, job_id } : null));
 
+      let pollAttempts = 0;
       pollRef.current = setInterval(async () => {
         if (gen !== exportGenRef.current) {
-          clearInterval(pollRef.current!);
+          clearInterval(pollRef.current ?? undefined);
+          return;
+        }
+        pollAttempts++;
+        if (pollAttempts > MAX_POLL_ATTEMPTS) {
+          clearPoll();
+          setJobStatus((s) => s ? { ...s, status: "failed", error: "Export timed out" } : null);
           return;
         }
         try {
           const status = await getJobStatus(job_id);
           setJobStatus(status);
           if (status.status === "done" || status.status === "failed") clearPoll();
-        } catch {
-          // Network hiccup — keep polling
+        } catch (e: unknown) {
+          // Malformed/unexpected response → surface as failure
+          if (e instanceof SyntaxError) {
+            clearPoll();
+            setJobStatus((s) => s ? { ...s, status: "failed", error: "Invalid server response" } : null);
+          }
+          // Network hiccup — keep polling silently
         }
       }, 2000);
     } catch (e: unknown) {
@@ -202,18 +222,19 @@ export default function TrailPrintApp() {
           onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
           onDragLeave={() => setIsDragging(false)}
           onDrop={onDrop}
-          onClick={() => document.getElementById("file-input")?.click()}
+          onClick={() => fileInputRef.current?.click()}
           role="button"
           tabIndex={0}
           aria-label="Drop a GPX or IGC file here, or press Enter or Space to browse"
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
-              document.getElementById("file-input")?.click();
+              fileInputRef.current?.click();
             }
           }}
         >
           <input
+            ref={fileInputRef}
             id="file-input"
             type="file"
             accept=".gpx,.igc"
@@ -360,7 +381,7 @@ export default function TrailPrintApp() {
                 className={`btn-export${exportFormat === fmt ? " active" : ""}`}
                 onClick={() => { setExportFormat(fmt); handleExport(fmt); }}
                 disabled={jobStatus?.status === "running" || jobStatus?.status === "pending"}
-                aria-current={exportFormat === fmt ? "true" : undefined}
+                aria-pressed={exportFormat === fmt}
               >
                 {fmt}
               </button>
@@ -372,9 +393,17 @@ export default function TrailPrintApp() {
               <div
                 className="progress-bar"
                 role="progressbar"
+                aria-label="Export progress"
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={jobStatus.progress}
+                aria-valuetext={
+                  jobStatus.status === "done"
+                    ? "Complete"
+                    : jobStatus.status === "failed"
+                    ? "Failed"
+                    : `${jobStatus.progress}%`
+                }
               >
                 <div
                   className={`progress-fill ${jobStatus.status}`}

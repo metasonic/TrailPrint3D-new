@@ -106,6 +106,11 @@ def build_terrain_mesh(
     # Clip to shape
     terrain = _clip_to_shape(terrain, config)
 
+    if len(terrain.faces) == 0:
+        raise ValueError(
+            "Shape clip produced an empty mesh — try a different shape, rotation, or size"
+        )
+
     # Add floor (min_thickness below lowest point)
     terrain = _add_floor(terrain, config.min_thickness)
 

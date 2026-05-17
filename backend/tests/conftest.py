@@ -1,6 +1,4 @@
 """Shared pytest fixtures."""
-import os
-
 import pytest
 
 
@@ -10,6 +8,9 @@ def set_test_env(tmp_path, monkeypatch):
     monkeypatch.setenv("OUTPUT_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
-    # Reset settings singleton so it re-reads env
+    # Clear the lru_cache so get_settings() re-reads the patched env vars
     import backend.config as cfg_mod
-    monkeypatch.setattr(cfg_mod, "_settings", None)
+    cfg_mod.get_settings.cache_clear()
+    yield
+    # Clear again after the test to avoid cross-test contamination
+    cfg_mod.get_settings.cache_clear()

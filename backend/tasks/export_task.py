@@ -9,9 +9,10 @@ import logging
 import os
 import re
 import subprocess
-import sys
-import time
+import threading
 from pathlib import Path
+
+import redis as _redis
 
 from .celery_app import app
 
@@ -22,12 +23,9 @@ _SAFE_FILENAME_RE = re.compile(r"^[0-9a-zA-Z_\-]+\.(stl|obj|3mf|glb)$", re.IGNOR
 BLENDER_TIMEOUT = 600  # hard cap on headless generation (seconds)
 
 
-def _update_job(redis_url: str, job_id: str, **fields):
-    """Write job state fields into Redis hash."""
+def _update_job(r: _redis.Redis, job_id: str, **fields) -> None:
+    """Write job state fields into the Redis hash for this job."""
     try:
-        import redis as _redis
-
-        r = _redis.from_url(redis_url)
         r.hset(f"job:{job_id}", mapping={k: str(v) for k, v in fields.items()})
         r.expire(f"job:{job_id}", 86400)
     except Exception:
@@ -45,7 +43,8 @@ def export_model(
     from backend.config import get_settings
 
     cfg = get_settings()
-    redis_url = str(cfg.REDIS_URL)
+    # Single Redis connection for the lifetime of this task
+    r = _redis.from_url(str(cfg.REDIS_URL))
 
     # Defence-in-depth: re-validate IDs even though the router already checked them.
     # A compromised Redis broker could enqueue tasks with malicious path components.
@@ -53,14 +52,30 @@ def export_model(
         logger.error("Invalid job_id or file_id received by Celery task: job=%s file=%s", job_id, file_id)
         return {"status": "failed", "error": "Invalid task arguments"}
 
-    job_dir = cfg.OUTPUT_DIR / "jobs" / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
-    export_dir = cfg.OUTPUT_DIR / "exports" / job_id
-    export_dir.mkdir(parents=True, exist_ok=True)
+    # Mark running immediately so any mkdir failure is captured in Redis
+    _update_job(r, job_id, status="running", progress=0, message="Preparing...")
 
+    try:
+        job_dir = cfg.OUTPUT_DIR / "jobs" / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        export_dir = cfg.OUTPUT_DIR / "exports" / job_id
+        export_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.exception("Failed to create directories for job %s", job_id)
+        _update_job(r, job_id, status="failed", error="Failed to create job directories")
+        return {"status": "failed"}
+
+    # Verify the source GPX/IGC file exists before starting Blender
     gpx_path = cfg.OUTPUT_DIR / "uploads" / f"{file_id}.gpx"
     if not gpx_path.exists():
         gpx_path = cfg.OUTPUT_DIR / "uploads" / f"{file_id}.igc"
+    if not gpx_path.exists():
+        _update_job(r, job_id, status="failed", error="Source GPX/IGC file not found")
+        logger.error("GPX/IGC file not found for file_id=%s job=%s", file_id, job_id)
+        return {"status": "failed"}
+
+    # Cap subdivisions to avoid runaway memory/CPU usage on export
+    num_subdivisions = min(settings_dict.get("num_subdivisions", 4), 6)
 
     config_payload = {
         "job_id": job_id,
@@ -71,8 +86,10 @@ def export_model(
         "settings": {
             "shape": settings_dict.get("shape", "HEXAGON"),
             "objSize": settings_dict.get("obj_size_mm", 100),
+            "rectangleHeight": settings_dict.get("rectangle_height", 100),
+            "ellipseRatio": settings_dict.get("ellipse_ratio", 0.75),
             "scaleElevation": settings_dict.get("elevation_scale", 1.0),
-            "num_subdivisions": settings_dict.get("num_subdivisions", 4),
+            "num_subdivisions": num_subdivisions,
             "pathThickness": settings_dict.get("path_thickness", 1.2),
             "pathScale": settings_dict.get("path_scale", 0.8),
             "shapeRotation": settings_dict.get("shape_rotation", 0),
@@ -117,8 +134,7 @@ def export_model(
     blender_exe = str(cfg.BLENDER_EXECUTABLE_PATH)
 
     if not Path(blender_exe).exists():
-        _update_job(redis_url, job_id, status="failed",
-                    error=f"Blender not found at configured path")
+        _update_job(r, job_id, status="failed", error="Blender not found at configured path")
         logger.error("Blender not found at %s", blender_exe)
         return {"status": "failed"}
 
@@ -134,7 +150,7 @@ def export_model(
     proc_env = dict(os.environ)
     proc_env["OPENTOPOGRAPHY_API_KEY"] = cfg.OPENTOPOGRAPHY_API_KEY
 
-    _update_job(redis_url, job_id, status="running", progress=0, message="Starting Blender...")
+    _update_job(r, job_id, status="running", progress=0, message="Starting Blender...")
 
     try:
         proc = subprocess.Popen(
@@ -148,8 +164,6 @@ def export_model(
         # Drain stdout in a thread while enforcing a hard timeout.
         # The naive "for line in proc.stdout + proc.wait(timeout=N)" pattern
         # does NOT enforce the timeout: the for-loop blocks until EOF regardless.
-        import queue, threading
-
         output_lines: list[str] = []
 
         def _drain():
@@ -164,13 +178,13 @@ def export_model(
         if drain_thread.is_alive():
             proc.kill()
             drain_thread.join(timeout=5)
-            _update_job(redis_url, job_id, status="failed",
-                        error=f"Blender timed out after {BLENDER_TIMEOUT}s")
+            _update_job(r, job_id, status="failed",
+                        error=f"Generation timed out after {BLENDER_TIMEOUT}s")
             return {"status": "failed"}
 
         proc.wait()
 
-        # Write log and parse progress for Redis after drain completes
+        # Write log and parse progress/status messages for Redis
         log_file = job_dir / "blender.log"
         with open(log_file, "w") as lf:
             for line in output_lines:
@@ -179,18 +193,19 @@ def export_model(
                 if stripped.startswith("PROGRESS:"):
                     try:
                         pct = int(stripped.split(":")[1].strip())
-                        _update_job(redis_url, job_id, progress=pct)
+                        _update_job(r, job_id, progress=pct)
                     except ValueError:
                         pass
                 elif stripped.startswith("STATUS:"):
                     # Sanitise message: printable ASCII only, max 200 chars
                     msg = stripped[7:].strip()
-                    msg = "".join(c for c in msg if c.isprintable())[:200]
-                    _update_job(redis_url, job_id, message=msg)
+                    msg = "".join(c for c in msg if c.isprintable() and ord(c) < 128)[:200]
+                    _update_job(r, job_id, message=msg)
 
         if proc.returncode != 0:
-            _update_job(redis_url, job_id, status="failed",
-                        error=f"Blender exited with code {proc.returncode}")
+            # Log the actual exit code server-side; return a generic message to Redis
+            logger.error("Blender exited with code %d for job %s", proc.returncode, job_id)
+            _update_job(r, job_id, status="failed", error="Generation failed")
             return {"status": "failed"}
 
         # Collect and validate output files before marking done
@@ -199,16 +214,21 @@ def export_model(
             if _SAFE_FILENAME_RE.match(f.name)
         ]
         if not output_files:
-            _update_job(redis_url, job_id, status="failed",
-                        error="Blender produced no output files")
+            _update_job(r, job_id, status="failed", error="No output files produced")
             return {"status": "failed"}
 
         file_names = [f.name for f in output_files]
-        _update_job(redis_url, job_id, status="done", progress=100,
-                    files=json.dumps(file_names))
+        _update_job(r, job_id, status="done", progress=100, files=json.dumps(file_names))
         return {"status": "done", "files": file_names}
 
-    except Exception as exc:
+    except Exception:
         logger.exception("Export task failed for job %s", job_id)
-        _update_job(redis_url, job_id, status="failed", error="Internal export error")
+        _update_job(r, job_id, status="failed", error="Internal export error")
         raise
+
+    finally:
+        # Remove config.json — it contains internal paths; log file is kept for debugging
+        try:
+            config_file.unlink(missing_ok=True)
+        except OSError:
+            pass

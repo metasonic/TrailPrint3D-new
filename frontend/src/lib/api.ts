@@ -13,16 +13,18 @@ async function fetchWithTimeout(
 
   // If the caller already has an AbortSignal, propagate it.
   // Handle the case where outerSignal is ALREADY aborted before this call.
+  const abortHandler = () => controller.abort();
   if (outerSignal?.aborted) {
     controller.abort();
   } else {
-    outerSignal?.addEventListener("abort", () => controller.abort(), { once: true });
+    outerSignal?.addEventListener("abort", abortHandler, { once: true });
   }
 
   try {
     return await fetch(url, { ...rest, signal: controller.signal });
   } finally {
     clearTimeout(timer);
+    outerSignal?.removeEventListener("abort", abortHandler);
   }
 }
 

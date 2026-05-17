@@ -1,7 +1,9 @@
-import os
 from celery import Celery
+from backend.config import get_settings
 
-redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+cfg = get_settings()
+redis_url = str(cfg.REDIS_URL)
+
 app = Celery("trailprint3d", broker=redis_url, backend=redis_url)
 
 app.conf.update(
@@ -13,4 +15,11 @@ app.conf.update(
     task_track_started=True,
     worker_prefetch_multiplier=1,
     task_acks_late=True,
+    # Expire Celery result keys after 1 day (matches manual job: key TTL)
+    result_expires=86400,
+    # Hard kill at 660 s if the soft limit (620 s) is not respected
+    task_soft_time_limit=620,
+    task_time_limit=660,
 )
+
+app.autodiscover_tasks(["backend.tasks"])

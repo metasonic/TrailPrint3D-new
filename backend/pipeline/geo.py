@@ -114,7 +114,10 @@ def bbox_for_track(
 ) -> tuple[float, float, float, float]:
     """Expand a bounding box by padding_km on each side."""
     lat_pad = padding_km / R * (180.0 / math.pi)
-    lon_pad = padding_km / (R * math.cos(math.radians((min_lat + max_lat) / 2))) * (180.0 / math.pi)
+    mid_lat = (min_lat + max_lat) / 2
+    # Clamp cos to avoid division by near-zero at polar latitudes (would produce globe-spanning bbox)
+    cos_mid = max(math.cos(math.radians(mid_lat)), 1e-4)
+    lon_pad = min(5.0, padding_km / (R * cos_mid) * (180.0 / math.pi))
     return (
         max(-90.0, min_lat - lat_pad),
         max(-180.0, min_lon - lon_pad),

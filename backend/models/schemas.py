@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
@@ -58,8 +58,8 @@ class GenerationSettings(BaseModel):
     # Element mode
     element_mode: Literal["PAINT", "SINGLECOLORMODE_REMESH", "SEPARATE"] = "PAINT"
 
-    # Text / frame
-    trail_name: str = Field("", max_length=100)
+    # Text / frame — restrict to safe characters to prevent path traversal in Blender export
+    trail_name: str = Field("", pattern=r"^[a-zA-Z0-9 _\-\.]{0,100}$")
     x_terrain_offset: float = 0.0
     y_terrain_offset: float = 0.0
 
@@ -78,7 +78,7 @@ class TrackStats(BaseModel):
     max_lat: float
     min_lon: float
     max_lon: float
-    date: str = ""
+    date: Optional[str] = None
 
 
 class PreviewRequest(BaseModel):

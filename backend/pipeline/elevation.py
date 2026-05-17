@@ -54,12 +54,15 @@ class ElevationConfig:
 
 _cache: dict[str, float] = {}
 _cache_lock = threading.Lock()
+_cache_loaded = False
 
 
 def _load_cache(config: ElevationConfig) -> None:
-    global _cache
+    global _cache, _cache_loaded
     p = config.elevation_cache_file
     with _cache_lock:
+        if _cache_loaded:
+            return
         if p.exists():
             try:
                 _cache = json.loads(p.read_text())
@@ -67,6 +70,7 @@ def _load_cache(config: ElevationConfig) -> None:
                 _cache = {}
         else:
             _cache = {}
+        _cache_loaded = True
 
 
 def _save_cache(config: ElevationConfig) -> None:
@@ -79,8 +83,11 @@ def _save_cache(config: ElevationConfig) -> None:
             for k in keys[:-max_size]:
                 del _cache[k]
         snapshot = dict(_cache)
+    # Atomic write: write to temp file then replace to avoid partial reads
     try:
-        p.write_text(json.dumps(snapshot))
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(snapshot))
+        tmp.replace(p)
     except Exception:
         pass
 
@@ -91,7 +98,7 @@ def _cache_key(lat: float, lon: float, api_type: str = "tt") -> str:
 
 def _get_cached(lat: float, lon: float, api_type: str = "tt") -> Optional[float]:
     with _cache_lock:
-        if not _cache:
+        if not _cache_loaded:
             return None
         return _cache.get(_cache_key(lat, lon, api_type))
 
@@ -106,6 +113,8 @@ def _set_cached(lat: float, lon: float, elevation: float, api_type: str = "tt") 
 # ---------------------------------------------------------------------------
 
 def _lonlat_to_tilexy(lon: float, lat: float, zoom: int) -> tuple[int, int]:
+    lon = max(-180.0, min(180.0, lon))
+    lat = max(-85.051129, min(85.051129, lat))  # Web Mercator valid range
     lat_rad = math.radians(lat)
     n = 2.0 ** zoom
     x = int((lon + 180.0) / 360.0 * n)
@@ -114,6 +123,8 @@ def _lonlat_to_tilexy(lon: float, lat: float, zoom: int) -> tuple[int, int]:
 
 
 def _lonlat_to_pixelxy(lon: float, lat: float, zoom: int) -> tuple[int, int]:
+    lon = max(-180.0, min(180.0, lon))
+    lat = max(-85.051129, min(85.051129, lat))
     lat_rad = math.radians(lat)
     n = 2.0 ** zoom
     px = (lon + 180.0) / 360.0 * n * 256
@@ -133,7 +144,8 @@ def _paeth_predictor(a: int, b: int, c: int) -> int:
 
 def _parse_png_rgb(png_bytes: bytes) -> list[list[tuple[int, int, int]]]:
     """Decode an 8-bit RGB PNG without external libraries."""
-    assert png_bytes[:8] == b"\x89PNG\r\n\x1a\n"
+    if png_bytes[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("Not a valid PNG file (bad magic bytes)")
     offset = 8
     width = height = None
     idat = b""
@@ -177,6 +189,8 @@ def _parse_png_rgb(png_bytes: bytes) -> list[list[tuple[int, int, int]]]:
                 b_val = prev[j]
                 c = prev[j - 3] if j >= 3 else 0
                 recon[j] = (scan[j] + _paeth_predictor(a, b_val, c)) & 0xFF
+        else:
+            raise ValueError(f"Unknown PNG filter type {ftype} in row {row_idx}")
         result.append([(recon[j], recon[j + 1], recon[j + 2]) for j in range(0, stride, 3)])
         prev = recon
     return result
@@ -191,8 +205,14 @@ def _fetch_tile(zoom: int, x: int, y: int, config: ElevationConfig) -> bytes:
     if path.exists():
         return path.read_bytes()
     url = f"https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{zoom}/{x}/{y}.png"
-    resp = requests.get(url, timeout=30)
-    resp.raise_for_status()
+    try:
+        resp = requests.get(url, timeout=30)
+        resp.raise_for_status()
+    except requests.HTTPError as e:
+        # Sanitize: strip the URL (which contains no secrets, but keeps messages clean)
+        raise requests.HTTPError(
+            f"Terrain tile fetch failed: HTTP {e.response.status_code}"
+        ) from None
     path.write_bytes(resp.content)
     return resp.content
 
@@ -252,7 +272,7 @@ def get_elevation_opentopodata(
     config: ElevationConfig,
     progress_cb=None,
 ) -> list[float]:
-    if not _cache:
+    if not _cache_loaded:
         _load_cache(config)
 
     to_fetch = []
@@ -301,7 +321,8 @@ def get_elevation_open_elevation(
     config: ElevationConfig,
     progress_cb=None,
 ) -> list[float]:
-    elevations: list[float] = []
+    # Pre-allocate so partial API responses don't cause reshape errors
+    elevations = [0.0] * len(coords)
     batch_size = 1000
     total = len(coords)
 
@@ -317,8 +338,9 @@ def get_elevation_open_elevation(
         )
         resp.raise_for_status()
         data = resp.json()
-        for result in data["results"]:
-            elevations.append(float(result.get("elevation") or 0.0))
+        for o, result in enumerate(data.get("results", [])):
+            if i + o < len(elevations):
+                elevations[i + o] = float(result.get("elevation") or 0.0)
         if progress_cb:
             progress_cb(int(min((i + len(batch)) / total * 100, 100)))
         elapsed = time.monotonic() - t0
@@ -352,12 +374,18 @@ def get_elevation_opentopography(
         "outputFormat": "GTiff",
         "API_Key": config.opentopography_api_key,
     }
-    resp = requests.get(
-        "https://portal.opentopography.org/API/globaldem",
-        params=params,
-        timeout=120,
-    )
-    resp.raise_for_status()
+    try:
+        resp = requests.get(
+            "https://portal.opentopography.org/API/globaldem",
+            params=params,
+            timeout=120,
+        )
+        resp.raise_for_status()
+    except requests.HTTPError as e:
+        # Sanitize error: the URL contains the API key as a query parameter
+        raise requests.HTTPError(
+            f"OpenTopography API request failed: HTTP {e.response.status_code}"
+        ) from None
 
     # Parse GeoTIFF via rasterio if available, otherwise fall back to OpenTopoData
     try:

@@ -6,8 +6,9 @@ import re
 import uuid
 from pathlib import Path
 
+import redis as _redis
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 
 from ..config import get_settings
 from ..models.schemas import ExportRequest, ExportResponse, JobStatus
@@ -18,6 +19,17 @@ logger = logging.getLogger(__name__)
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 # Case-insensitive so Blender's uppercase .STL/.OBJ outputs are accepted
 _SAFE_FILENAME_RE = re.compile(r"^[0-9a-zA-Z_\-]+\.(stl|obj|3mf|glb)$", re.IGNORECASE)
+_VALID_STATUSES = {"pending", "running", "done", "failed"}
+
+# Module-level connection pool — shared across all requests in this process
+_pool: _redis.ConnectionPool | None = None
+
+
+def _get_redis() -> _redis.Redis:
+    global _pool
+    if _pool is None:
+        _pool = _redis.ConnectionPool.from_url(str(get_settings().REDIS_URL))
+    return _redis.Redis(connection_pool=_pool)
 
 
 def _validate_uuid(value: str, field: str) -> None:
@@ -42,9 +54,7 @@ async def start_export(body: ExportRequest):
     job_id = str(uuid.uuid4())
 
     try:
-        import redis as _redis
-
-        r = _redis.from_url(str(cfg.REDIS_URL))
+        r = _get_redis()
         r.hset(
             f"job:{job_id}",
             mapping={"status": "pending", "progress": "0", "message": "Queued", "files": "[]"},
@@ -67,11 +77,8 @@ async def start_export(body: ExportRequest):
 @router.get("/job/{job_id}", response_model=JobStatus)
 async def get_job_status(job_id: str):
     _validate_uuid(job_id, "job_id")
-    cfg = get_settings()
     try:
-        import redis as _redis
-
-        r = _redis.from_url(str(cfg.REDIS_URL))
+        r = _get_redis()
         data = r.hgetall(f"job:{job_id}")
     except Exception:
         logger.exception("Redis unavailable when fetching job %s", job_id)
@@ -90,9 +97,13 @@ async def get_job_status(job_id: str):
     except Exception:
         pass
 
+    # Guard against corrupted/unexpected status values from Redis
+    raw_status = _s(data.get(b"status", data.get("status", "pending")))
+    status = raw_status if raw_status in _VALID_STATUSES else "failed"
+
     return JobStatus(
         job_id=job_id,
-        status=_s(data.get(b"status", data.get("status", "pending"))),
+        status=status,
         progress=int(_s(data.get(b"progress", data.get("progress", 0)))),
         message=_s(data.get(b"message", data.get("message", ""))),
         error=_s(data.get(b"error", data.get("error", ""))) or None,

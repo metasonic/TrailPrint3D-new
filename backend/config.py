@@ -1,3 +1,4 @@
+from functools import lru_cache
 from pathlib import Path
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -32,21 +33,24 @@ class Settings(BaseSettings):
             )
         return v.rstrip("/")
 
+    @field_validator("OVERPASS_URL", "OPENTOPODATA_URL")
+    @classmethod
+    def _validate_external_url(cls, v: str) -> str:
+        if not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError("Must be an http(s):// URL")
+        return v
 
-_settings: Settings | None = None
 
-
+@lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    global _settings
-    if _settings is None:
-        _settings = Settings()
-        _settings.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        (_settings.OUTPUT_DIR / "uploads").mkdir(exist_ok=True)
-        (_settings.OUTPUT_DIR / "preview").mkdir(exist_ok=True)
-        (_settings.OUTPUT_DIR / "exports").mkdir(exist_ok=True)
-        (_settings.OUTPUT_DIR / "jobs").mkdir(exist_ok=True)
-        _settings.CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        (_settings.CACHE_DIR / "elevation").mkdir(exist_ok=True)
-        (_settings.CACHE_DIR / "tiles").mkdir(exist_ok=True)
-        (_settings.CACHE_DIR / "osm").mkdir(exist_ok=True)
-    return _settings
+    s = Settings()
+    s.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    (s.OUTPUT_DIR / "uploads").mkdir(exist_ok=True)
+    (s.OUTPUT_DIR / "preview").mkdir(exist_ok=True)
+    (s.OUTPUT_DIR / "exports").mkdir(exist_ok=True)
+    (s.OUTPUT_DIR / "jobs").mkdir(exist_ok=True)
+    s.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    (s.CACHE_DIR / "elevation").mkdir(exist_ok=True)
+    (s.CACHE_DIR / "tiles").mkdir(exist_ok=True)
+    (s.CACHE_DIR / "osm").mkdir(exist_ok=True)
+    return s

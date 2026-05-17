@@ -18,6 +18,9 @@ function disposeMesh(mesh: THREE.Mesh) {
 
 export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
+  // Ref to always invoke the latest onError without stale-closure risk
+  const onErrorRef = useRef(onError);
+  useEffect(() => { onErrorRef.current = onError; });
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -178,14 +181,13 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
       (err) => {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : "Failed to load 3D model";
-        onError?.(msg);
+        onErrorRef.current?.(msg);
       }
     );
 
     return () => {
       cancelled = true;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [glbUrl]);
 
   return (

@@ -163,7 +163,10 @@ def fetch_osm_data(
     if cache_path.exists() and not config.disable_cache:
         age_hours = (time.time() - cache_path.stat().st_mtime) / 3600
         if age_hours < config.cache_max_age_hours:
-            return json.loads(cache_path.read_text())
+            try:
+                return json.loads(cache_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                pass  # Corrupt/partial cache file — fall through to re-fetch
 
     s, w, n, e = bbox
     s = max(-90.0, min(90.0, s))
@@ -182,7 +185,10 @@ def fetch_osm_data(
             )
             resp.raise_for_status()
             data = resp.json()
-            cache_path.write_text(json.dumps(data))
+            # Atomic write to avoid partial reads by concurrent requests
+            tmp = cache_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data))
+            tmp.replace(cache_path)
             return data
         except Exception as exc:
             wait = 2 ** attempt

@@ -20,4 +20,6 @@ COPY --from=builder /app/package.json ./
 ENV HOST=0.0.0.0
 ENV PORT=3000
 EXPOSE 3000
+# Drop to non-root user (node user ships in node:22-slim at UID 1000)
+USER node
 CMD ["node", "dist/server/entry.mjs"]

@@ -34,7 +34,20 @@ class _SecurityHeaders(BaseHTTPMiddleware):
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        resp.headers["X-XSS-Protection"] = "1; mode=block"
+        # X-XSS-Protection is deprecated; set to 0 to avoid legacy browser quirks
+        resp.headers["X-XSS-Protection"] = "0"
+        resp.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' blob: data:; "
+            "connect-src 'self'; "
+            "worker-src blob:; "
+            "object-src 'none';"
+        )
+        resp.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=(), payment=()"
+        if cfg.ENVIRONMENT != "development":
+            resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return resp
 
 
