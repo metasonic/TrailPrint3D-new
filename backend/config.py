@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     CACHE_MAX_AGE_HOURS: int = 720
     ELEVATION_CACHE_SIZE: int = 50000
     ADDON_SRC_DIR: Path = Path("/app/TrailPrint3D")
+    FRONTEND_URL: str = "http://localhost:3000"
 
 
 _settings: Settings | None = None

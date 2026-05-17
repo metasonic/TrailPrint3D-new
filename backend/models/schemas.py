@@ -58,7 +58,7 @@ class GenerationSettings(BaseModel):
     element_mode: Literal["PAINT", "SINGLECOLORMODE_REMESH", "SEPARATE"] = "PAINT"
 
     # Text / frame
-    trail_name: str = ""
+    trail_name: str = Field("", max_length=100)
     x_terrain_offset: float = 0.0
     y_terrain_offset: float = 0.0
 

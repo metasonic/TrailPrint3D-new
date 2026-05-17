@@ -6,15 +6,15 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 interface Props {
   glbUrl: string | null;
   loading?: boolean;
+  onError?: (msg: string) => void;
 }
 
-export default function Preview3D({ glbUrl, loading = false }: Props) {
+export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
-  const frameRef = useRef<number>(0);
   const modelGroupRef = useRef<THREE.Group | null>(null);
 
   // Initialize Three.js scene once
@@ -34,7 +34,6 @@ export default function Preview3D({ glbUrl, loading = false }: Props) {
     scene.background = new THREE.Color(0x1a1a2e);
     sceneRef.current = scene;
 
-    // Lighting
     const ambient = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambient);
     const sun = new THREE.DirectionalLight(0xfff8e0, 1.4);
@@ -46,17 +45,11 @@ export default function Preview3D({ glbUrl, loading = false }: Props) {
     fill.position.set(-60, 40, -80);
     scene.add(fill);
 
-    // Grid helper
     const grid = new THREE.GridHelper(400, 20, 0x333355, 0x222244);
     grid.position.y = -0.5;
     scene.add(grid);
 
-    const camera = new THREE.PerspectiveCamera(
-      45,
-      el.clientWidth / el.clientHeight,
-      0.01,
-      10000
-    );
+    const camera = new THREE.PerspectiveCamera(45, el.clientWidth / el.clientHeight, 0.01, 10000);
     camera.position.set(0, 150, 200);
     cameraRef.current = camera;
 
@@ -74,9 +67,8 @@ export default function Preview3D({ glbUrl, loading = false }: Props) {
       controls.update();
       renderer.render(scene, camera);
     }
-    frameRef.current = animId = requestAnimationFrame(animate);
+    animId = requestAnimationFrame(animate);
 
-    // Resize observer
     const ro = new ResizeObserver(() => {
       if (!mountRef.current) return;
       const w = mountRef.current.clientWidth;
@@ -100,8 +92,17 @@ export default function Preview3D({ glbUrl, loading = false }: Props) {
   useEffect(() => {
     if (!sceneRef.current || !cameraRef.current || !controlsRef.current) return;
 
-    // Remove old model
+    // Dispose old model to prevent geometry/material leaks
     if (modelGroupRef.current) {
+      modelGroupRef.current.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          const mesh = child as THREE.Mesh;
+          mesh.geometry.dispose();
+          const mat = mesh.material;
+          if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+          else mat.dispose();
+        }
+      });
       sceneRef.current.remove(modelGroupRef.current);
       modelGroupRef.current = null;
     }
@@ -118,51 +119,41 @@ export default function Preview3D({ glbUrl, loading = false }: Props) {
             const mesh = child as THREE.Mesh;
             mesh.castShadow = true;
             mesh.receiveShadow = true;
-            // Apply materials by node name
-            if (child.name === "trail") {
-              mesh.material = new THREE.MeshStandardMaterial({
-                color: 0xdc3232,
-                roughness: 0.6,
-                metalness: 0.1,
-              });
-            } else {
-              mesh.material = new THREE.MeshStandardMaterial({
-                color: 0xb8b8c0,
-                roughness: 0.8,
-                metalness: 0.05,
-              });
-            }
+            mesh.material =
+              child.name === "trail"
+                ? new THREE.MeshStandardMaterial({ color: 0xdc3232, roughness: 0.6, metalness: 0.1 })
+                : new THREE.MeshStandardMaterial({ color: 0xb8b8c0, roughness: 0.8, metalness: 0.05 });
           }
         });
         group.add(gltf.scene);
         sceneRef.current!.add(group);
         modelGroupRef.current = group;
 
-        // Fit camera to model
         const box = new THREE.Box3().setFromObject(group);
         const center = box.getCenter(new THREE.Vector3());
         const size = box.getSize(new THREE.Vector3());
         const maxDim = Math.max(size.x, size.y, size.z);
 
         controlsRef.current!.target.copy(center);
-        cameraRef.current!.position.set(
-          center.x,
-          center.y + maxDim * 0.8,
-          center.z + maxDim * 1.2
-        );
+        cameraRef.current!.position.set(center.x, center.y + maxDim * 0.8, center.z + maxDim * 1.2);
         cameraRef.current!.updateProjectionMatrix();
         controlsRef.current!.update();
       },
       undefined,
-      (err) => console.error("GLB load error:", err)
+      (err) => {
+        const msg = err instanceof Error ? err.message : "Failed to load 3D model";
+        onError?.(msg);
+      }
     );
   }, [glbUrl]);
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <div ref={mountRef} style={{ width: "100%", height: "100%" }} />
+      <div ref={mountRef} style={{ width: "100%", height: "100%" }} aria-label="3D terrain preview" role="img" />
       {loading && (
         <div
+          role="status"
+          aria-live="polite"
           style={{
             position: "absolute",
             inset: 0,
@@ -175,11 +166,12 @@ export default function Preview3D({ glbUrl, loading = false }: Props) {
             gap: "0.5rem",
           }}
         >
-          <span className="spinner" /> Generating preview…
+          <span className="spinner" aria-hidden="true" /> Generating preview…
         </div>
       )}
       {!glbUrl && !loading && (
         <div
+          aria-hidden="true"
           style={{
             position: "absolute",
             inset: 0,
@@ -191,7 +183,7 @@ export default function Preview3D({ glbUrl, loading = false }: Props) {
             pointerEvents: "none",
           }}
         >
-          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
             <path d="M12 2L2 7l10 5 10-5-10-5z" />
             <path d="M2 17l10 5 10-5" />
             <path d="M2 12l10 5 10-5" />

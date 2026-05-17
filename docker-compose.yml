@@ -2,7 +2,7 @@ version: "3.9"
 
 # ── Shared env block for backend + worker ────────────────────────────────────
 x-backend-env: &backend-env
-  REDIS_URL: redis://redis:6379/0
+  REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
   OUTPUT_DIR: /app/data
   CACHE_DIR: /app/.cache
   BLENDER_EXECUTABLE_PATH: /opt/blender/blender
@@ -13,8 +13,15 @@ x-backend-env: &backend-env
   OPENTOPOGRAPHY_API_KEY: ""
   OVERPASS_URL: https://overpass-api.de/api/interpreter
   ADDON_SRC_DIR: /app/TrailPrint3D
+  FRONTEND_URL: ${PUBLIC_API_URL:-http://localhost:3000}
   PYTHONPATH: /app
   PYTHONUNBUFFERED: "1"
+
+networks:
+  frontend-net:
+    driver: bridge
+  backend-net:
+    driver: bridge
 
 services:
   # ── Frontend ───────────────────────────────────────────────────────────────
@@ -23,11 +30,13 @@ services:
       context: .
       dockerfile: frontend/Dockerfile
       args:
-        PUBLIC_API_URL: http://localhost:8000
+        PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
     environment:
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+    networks:
+      - frontend-net
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/').on('error',()=>process.exit(1))"]
@@ -48,6 +57,9 @@ services:
       - cache:/app/.cache
     environment:
       <<: *backend-env
+    networks:
+      - frontend-net
+      - backend-net
     depends_on:
       redis:
         condition: service_healthy
@@ -78,10 +90,18 @@ services:
       - cache:/app/.cache
     environment:
       <<: *backend-env
+    networks:
+      - backend-net
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "celery", "-A", "backend.tasks.celery_app", "inspect", "ping", "--timeout", "5"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
     deploy:
       resources:
         limits:
@@ -93,10 +113,12 @@ services:
     image: redis:7-alpine
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-changeme}
+    networks:
+      - backend-net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5

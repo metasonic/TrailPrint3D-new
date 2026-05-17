@@ -6,8 +6,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget xz-utils c
 
 ARG BLENDER_VERSION=4.5.0
 ARG BLENDER_ARCH=linux-x64
+# SHA256 of blender-4.5.0-linux-x64.tar.xz — update when upgrading Blender.
+# Verify: sha256sum blender-<version>-linux-x64.tar.xz
+ARG BLENDER_SHA256=""
+
 RUN wget -q "https://download.blender.org/release/Blender${BLENDER_VERSION%.*}/blender-${BLENDER_VERSION}-${BLENDER_ARCH}.tar.xz" \
     -O /tmp/blender.tar.xz \
+    && if [ -n "${BLENDER_SHA256}" ]; then \
+         echo "${BLENDER_SHA256}  /tmp/blender.tar.xz" | sha256sum -c - || exit 1; \
+       fi \
     && mkdir -p /opt/blender \
     && tar -xf /tmp/blender.tar.xz -C /opt/blender --strip-components=1 \
     && rm /tmp/blender.tar.xz
@@ -43,6 +50,12 @@ COPY TrailPrint3D/ ./TrailPrint3D/
 
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED="1"
+
+# Run as non-root for security
+RUN groupadd --gid 1001 appuser \
+    && useradd --uid 1001 --gid appuser --no-create-home appuser \
+    && chown -R appuser:appuser /app
+USER appuser
 
 EXPOSE 8000
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

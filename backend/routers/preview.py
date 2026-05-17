@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import re
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -11,13 +14,20 @@ from ..pipeline.elevation import ElevationConfig
 
 router = APIRouter(prefix="/api", tags=["preview"])
 
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def _validate_uuid(value: str, field: str) -> None:
+    if not _UUID_RE.match(value):
+        raise HTTPException(status_code=400, detail=f"Invalid {field}")
+
 
 @router.post("/preview", response_model=PreviewResponse)
 async def generate_preview(body: PreviewRequest):
+    _validate_uuid(body.file_id, "file_id")
     cfg = get_settings()
     settings = body.settings
 
-    # Locate uploaded file (could be .gpx or .igc)
     gpx_path: Path | None = None
     for ext in (".gpx", ".igc"):
         p = cfg.OUTPUT_DIR / "uploads" / f"{body.file_id}{ext}"
@@ -43,7 +53,8 @@ async def generate_preview(body: PreviewRequest):
     try:
         from ..pipeline.preview_export import generate_preview as _gen
 
-        terrain_stats = _gen(gpx_path, settings, out_path, elev_cfg)
+        # Run blocking I/O in a thread so the event loop stays free
+        terrain_stats = await asyncio.to_thread(_gen, gpx_path, settings, out_path, elev_cfg)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Preview generation failed: {exc}")
 
@@ -54,10 +65,13 @@ async def generate_preview(body: PreviewRequest):
 @router.get("/preview/{filename}")
 async def serve_preview(filename: str):
     cfg = get_settings()
-    # Sanitize: only alphanumeric + dash/underscore + .glb allowed
-    if not filename.replace("-", "").replace("_", "").replace(".", "").isalnum():
+    # Only allow UUID.glb filenames
+    name = filename[:-4] if filename.endswith(".glb") else ""
+    if not name or not _UUID_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid filename")
     path = cfg.OUTPUT_DIR / "preview" / filename
-    if not path.exists() or path.suffix != ".glb":
+    # Path jail: ensure resolved path stays inside preview dir
+    preview_dir = (cfg.OUTPUT_DIR / "preview").resolve()
+    if not path.resolve().is_relative_to(preview_dir) or not path.exists():
         raise HTTPException(status_code=404, detail="Preview not found")
     return FileResponse(str(path), media_type="model/gltf-binary", filename=filename)

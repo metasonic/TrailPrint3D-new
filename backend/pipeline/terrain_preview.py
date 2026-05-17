@@ -79,14 +79,16 @@ def build_terrain_mesh(
         span = 1.0
     scale_hor = config.obj_size_mm / span
 
-    # Build vertices
+    # Build vertices — x,y,z all in mm-equivalent world units so min_thickness
+    # (also in mm) can be subtracted directly in _add_floor.
+    # z: elevation_m → km (*1/1000) → mm-equivalent (*scale_hor).
     verts = np.zeros((n * n, 3), dtype=np.float64)
     for i in range(n):
         for j in range(n):
             idx = i * n + j
             verts[idx, 0] = xs[j] * scale_hor
             verts[idx, 1] = ys[i] * scale_hor
-            verts[idx, 2] = elev_grid[i, j] / 1000.0 * config.elevation_scale
+            verts[idx, 2] = elev_grid[i, j] / 1000.0 * scale_hor * config.elevation_scale
 
     # Build faces (two triangles per quad)
     faces = []
@@ -194,12 +196,12 @@ def _heart_inside(vx: np.ndarray, vy: np.ndarray, r: float) -> np.ndarray:
 
 
 def _add_floor(mesh: trimesh.Trimesh, min_thickness: float) -> trimesh.Trimesh:
-    """Extrude the mesh downward by min_thickness to create a solid base."""
+    """Extrude the mesh downward by min_thickness (mm, same units as x/y/z) to create a solid base."""
     if len(mesh.vertices) == 0:
         return mesh
 
     z_min = mesh.vertices[:, 2].min()
-    floor_z = z_min - min_thickness / 1000.0  # min_thickness in mm → km units
+    floor_z = z_min - min_thickness  # both already in mm-equivalent world units
 
     # Create floor vertices (same XY, fixed Z)
     top_verts = mesh.vertices.copy()

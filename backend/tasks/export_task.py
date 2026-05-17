@@ -112,7 +112,15 @@ def export_model(
         str(config_file),
     ]
 
+    # Validate Blender executable exists before dispatching
+    if not Path(blender_exe).exists():
+        _update_job(redis_url, job_id, status="failed",
+                    error=f"Blender not found at {blender_exe!r}")
+        return {"status": "failed"}
+
     _update_job(redis_url, job_id, status="running", progress=0, message="Starting Blender...")
+
+    BLENDER_TIMEOUT = 600  # seconds — hard cap on headless generation
 
     try:
         proc = subprocess.Popen(
@@ -139,7 +147,14 @@ def export_model(
                     msg = line[7:].strip()
                     _update_job(redis_url, job_id, message=msg)
 
-        proc.wait()
+        try:
+            proc.wait(timeout=BLENDER_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            _update_job(redis_url, job_id, status="failed",
+                        error=f"Blender timed out after {BLENDER_TIMEOUT}s")
+            return {"status": "failed"}
 
         if proc.returncode != 0:
             _update_job(redis_url, job_id, status="failed", error=f"Blender exited with code {proc.returncode}")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from pathlib import Path
 
@@ -12,12 +13,20 @@ from ..models.schemas import ExportRequest, ExportResponse, JobStatus
 
 router = APIRouter(prefix="/api", tags=["export"])
 
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_SAFE_FILENAME_RE = re.compile(r"^[0-9a-zA-Z_\-]+\.(stl|obj|3mf|glb)$")
+
+
+def _validate_uuid(value: str, field: str) -> None:
+    if not _UUID_RE.match(value):
+        raise HTTPException(status_code=400, detail=f"Invalid {field}")
+
 
 @router.post("/export", response_model=ExportResponse)
 async def start_export(body: ExportRequest):
+    _validate_uuid(body.file_id, "file_id")
     cfg = get_settings()
 
-    # Check file exists
     gpx_path: Path | None = None
     for ext in (".gpx", ".igc"):
         p = cfg.OUTPUT_DIR / "uploads" / f"{body.file_id}{ext}"
@@ -29,7 +38,6 @@ async def start_export(body: ExportRequest):
 
     job_id = str(uuid.uuid4())
 
-    # Initialize job status in Redis
     try:
         import redis as _redis
 
@@ -42,7 +50,6 @@ async def start_export(body: ExportRequest):
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Queue unavailable: {exc}")
 
-    # Dispatch Celery task
     from ..tasks.export_task import export_model
 
     export_model.apply_async(
@@ -55,6 +62,7 @@ async def start_export(body: ExportRequest):
 
 @router.get("/job/{job_id}", response_model=JobStatus)
 async def get_job_status(job_id: str):
+    _validate_uuid(job_id, "job_id")
     cfg = get_settings()
     try:
         import redis as _redis
@@ -89,15 +97,18 @@ async def get_job_status(job_id: str):
 
 @router.get("/download/{job_id}/{filename}")
 async def download_file(job_id: str, filename: str):
+    _validate_uuid(job_id, "job_id")
     cfg = get_settings()
 
-    # Sanitize
-    if not all(c.isalnum() or c in "-_." for c in filename):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    if "/" in filename or "\\" in filename:
+    if not _SAFE_FILENAME_RE.match(filename):
         raise HTTPException(status_code=400, detail="Invalid filename")
 
-    path = cfg.OUTPUT_DIR / "exports" / job_id / filename
+    exports_dir = (cfg.OUTPUT_DIR / "exports").resolve()
+    path = (cfg.OUTPUT_DIR / "exports" / job_id / filename).resolve()
+
+    # Path-traversal jail: resolved path must stay inside exports dir
+    if not path.is_relative_to(exports_dir):
+        raise HTTPException(status_code=400, detail="Invalid path")
     if not path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 

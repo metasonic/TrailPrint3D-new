@@ -1,5 +1,27 @@
 const API_BASE = import.meta.env.PUBLIC_API_URL ?? "http://localhost:8000";
 
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit & { signal?: AbortSignal; timeoutMs?: number } = {}
+): Promise<Response> {
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, signal: outerSignal, ...rest } = options;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  // If the caller already provides a signal, abort when either fires
+  const onOuterAbort = () => controller.abort();
+  outerSignal?.addEventListener("abort", onOuterAbort);
+
+  try {
+    return await fetch(url, { ...rest, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+    outerSignal?.removeEventListener("abort", onOuterAbort);
+  }
+}
+
 export interface TrackStats {
   point_count: number;
   length_km: number;
@@ -60,10 +82,15 @@ export interface JobStatus {
   files: string[];
 }
 
-export async function uploadFile(file: File): Promise<UploadResponse> {
+export async function uploadFile(file: File, signal?: AbortSignal): Promise<UploadResponse> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${API_BASE}/api/upload`, { method: "POST", body: form });
+  const res = await fetchWithTimeout(`${API_BASE}/api/upload`, {
+    method: "POST",
+    body: form,
+    signal,
+    timeoutMs: 60_000,
+  });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail ?? "Upload failed");
@@ -73,12 +100,15 @@ export async function uploadFile(file: File): Promise<UploadResponse> {
 
 export async function generatePreview(
   fileId: string,
-  settings: GenerationSettings
+  settings: GenerationSettings,
+  signal?: AbortSignal
 ): Promise<PreviewResponse> {
-  const res = await fetch(`${API_BASE}/api/preview`, {
+  const res = await fetchWithTimeout(`${API_BASE}/api/preview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ file_id: fileId, settings }),
+    signal,
+    timeoutMs: 120_000,
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
@@ -95,12 +125,14 @@ export function resolvePreviewUrl(glbUrl: string): string {
 export async function startExport(
   fileId: string,
   settings: GenerationSettings,
-  format: "STL" | "OBJ" | "3MF"
+  format: "STL" | "OBJ" | "3MF",
+  signal?: AbortSignal
 ): Promise<ExportResponse> {
-  const res = await fetch(`${API_BASE}/api/export`, {
+  const res = await fetchWithTimeout(`${API_BASE}/api/export`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ file_id: fileId, settings, format }),
+    signal,
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
@@ -109,8 +141,8 @@ export async function startExport(
   return res.json();
 }
 
-export async function getJobStatus(jobId: string): Promise<JobStatus> {
-  const res = await fetch(`${API_BASE}/api/job/${jobId}`);
+export async function getJobStatus(jobId: string, signal?: AbortSignal): Promise<JobStatus> {
+  const res = await fetchWithTimeout(`${API_BASE}/api/job/${jobId}`, { signal });
   if (!res.ok) throw new Error("Could not fetch job status");
   return res.json();
 }
