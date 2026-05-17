@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xvfb \
         python3.11 python3-pip \
         curl \
+        fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and install Blender 4.5

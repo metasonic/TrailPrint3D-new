@@ -121,6 +121,37 @@ except Exception as exc:
     sys.exit(1)
 
 # ---------------------------------------------------------------------------
+# 5b. Ensure cache/preset directories exist (normally done by addon register)
+# ---------------------------------------------------------------------------
+
+try:
+    from TrailPrint3D.constants import _ensure_dirs  # type: ignore
+    _ensure_dirs()
+except Exception as exc:
+    print(json.dumps({'type': 'warning',
+                      'message': f'Could not create cache dirs: {exc}',
+                      'level': 'warn'}),
+          flush=True)
+
+# ---------------------------------------------------------------------------
+# 5c. Resolve font path for Docker/Linux environments
+# ---------------------------------------------------------------------------
+
+# If textFont is empty and we're on Linux, try common system font paths so
+# text-plate shapes don't silently fail bpy.data.fonts.load("").
+if not params.get('textFont'):
+    _linux_fonts = [
+        '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+        '/usr/share/fonts/liberation/LiberationSans-Bold.ttf',
+        '/usr/share/fonts/truetype/freefont/FreeSansBold.ttf',
+    ]
+    for _fp in _linux_fonts:
+        if os.path.isfile(_fp):
+            params['textFont'] = _fp
+            break
+
+# ---------------------------------------------------------------------------
 # 6. bpy is available — set up a clean default scene
 # ---------------------------------------------------------------------------
 
@@ -213,6 +244,21 @@ try:
           flush=True)
 
     runGeneration(run_type)
+
+    # runGeneration returns None on both success and failure; check for output
+    # files as the reliable indicator that the pipeline completed.
+    import glob
+    output_files = []
+    for _pat in ('*.stl', '*.obj', '*.3mf'):
+        output_files.extend(glob.glob(os.path.join(job_dir, _pat)))
+
+    if not output_files:
+        print(json.dumps({'type': 'error',
+                          'message': 'Generation produced no output files — '
+                                     'check GPX path, export path, and settings. '
+                                     'See log output above for details.'}),
+              flush=True)
+        sys.exit(1)
 
 except SystemExit:
     # runGeneration may call sys.exit on cancellation — treat as error
