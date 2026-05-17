@@ -1,8 +1,153 @@
-# TrailPrint3D
+# TrailPrint3D — Web Application
 
-A Blender addon that turns GPS trails and geographic data into 3D-printable miniature maps.
+Convert any GPX or IGC trail file into a 3D-printable terrain mesh — all in a browser.  
+Self-hosted, no cloud lock-in, export to STL / OBJ / 3MF.
 
-[TrailPrint3D.com](https://www.trailprint3d.com)
+> **Original Blender addon**: [TrailPrint3D.com](https://www.trailprint3d.com)
+
+---
+
+## Architecture
+
+```
+┌──────────────┐       POST /api/upload, /api/preview, /api/export
+│  Astro 6     │ ──────────────────────────────────────────────────►
+│  Three.js    │                                                    │
+│  React island│ ◄── GLB (glTF binary for Three.js preview) ───────┤
+└──────────────┘                                                    │
+                                         ┌────────────────────────  ▼ ──────────────────────────┐
+                                         │               FastAPI Backend                        │
+                                         │                                                      │
+                                         │  Quick Preview (pure Python, < 15 s)                 │
+                                         │   gpx_parser → geo → elevation → trimesh → GLB       │
+                                         │                                                      │
+                                         │  Final Export (headless Blender, < 120 s)            │
+                                         │   Celery → blender --background → STL / OBJ / 3MF   │
+                                         └──────────────────────────────────────────────────────┘
+```
+
+**Two processing modes:**
+
+| Mode | Trigger | Engine | Output | Target time |
+|------|---------|--------|--------|-------------|
+| Quick Preview | Settings change | Pure Python (numpy + trimesh) | GLB | < 15 s |
+| Final Export | Export button | Headless Blender 4.5 | STL / OBJ / 3MF | < 120 s |
+
+---
+
+## Quick Start (Docker Compose)
+
+```bash
+git clone https://github.com/metasonic/trailprint3d-new
+cd trailprint3d-new
+cp .env.example .env
+docker compose up --build
+```
+
+Open **http://localhost:3000** in your browser.
+
+---
+
+## Environment Variables
+
+Copy `.env.example` to `.env` and adjust as needed.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PUBLIC_API_URL` | `http://localhost:8000` | Backend URL as seen by the browser |
+| `REDIS_URL` | `redis://redis:6379/0` | Celery/job-queue broker |
+| `OUTPUT_DIR` | `/app/data` | Uploaded files, previews, exports |
+| `CACHE_DIR` | `/app/.cache` | Elevation tiles, OSM, elevation cache |
+| `BLENDER_EXECUTABLE_PATH` | `/opt/blender/blender` | Path to Blender 4.5+ binary |
+| `MAX_UPLOAD_SIZE_MB` | `50` | Maximum GPX file size |
+| `ELEVATION_DATA_SOURCE` | `TERRAIN-TILES` | Default elevation API (see below) |
+| `TERRAIN_RESOLUTION` | `4` | Default `num_subdivisions` (1–8) |
+| `OPENTOPODATA_URL` | `https://api.opentopodata.org/v1/` | Can point to self-hosted instance |
+| `OPENTOPOGRAPHY_API_KEY` | _(empty)_ | Required only for OpenTopography API |
+| `OVERPASS_URL` | `https://overpass-api.de/api/interpreter` | Can point to self-hosted Overpass |
+| `CACHE_MAX_AGE_HOURS` | `720` | How long OSM/elevation cache is reused |
+
+### Elevation API options
+
+| Value | Speed | Coverage | Key required |
+|-------|-------|----------|-------------|
+| `TERRAIN-TILES` | ★★★ Fastest | Global | No |
+| `OPENTOPODATA` | ★★ | Global (dataset-dependent) | No (rate limited) |
+| `OPEN-ELEVATION` | ★★ | Global | No (rate limited) |
+| `OPENTOPOGRAPHY` | ★★ | Global, high-res | Yes (free) |
+
+---
+
+## Development Setup
+
+### Backend
+
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Run tests:
+
+```bash
+python -m pytest backend/tests/ -v
+```
+
+Start Celery worker (requires Redis):
+
+```bash
+celery -A backend.tasks.celery_app worker --loglevel=info
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+---
+
+## API Reference
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/upload` | Upload a GPX/IGC file; returns `file_id` + track stats |
+| `POST` | `/api/preview` | Generate a GLB preview; returns URL |
+| `GET` | `/api/preview/{filename}` | Serve the GLB binary |
+| `POST` | `/api/export` | Queue a full export; returns `job_id` |
+| `GET` | `/api/job/{job_id}` | Poll job status and progress |
+| `GET` | `/api/download/{job_id}/{filename}` | Download the finished file |
+| `GET` | `/health` | Health check |
+
+---
+
+## Supported Features
+
+| Feature | Preview | Export |
+|---------|---------|--------|
+| GPX / IGC parsing | ✓ | ✓ |
+| Terrain elevation (4 APIs) | ✓ | ✓ |
+| Shape: Hex / Circle / Square / Octagon / Ellipse / Heart | ✓ | ✓ |
+| Elevation scale | ✓ | ✓ |
+| Trail extrusion | ✓ | ✓ |
+| OSM water / forests / roads / buildings | — | ✓ |
+| Frame / plate / text labels | — | ✓ |
+| STL export | — | ✓ |
+| OBJ export (with materials) | — | ✓ |
+| 3MF export | — | ✓ |
+
+---
+
+## Data Attribution
+
+- **Elevation**: [Terrain Tiles / Amazon](https://registry.opendata.aws/terrain-tiles/) · [OpenTopoData](https://www.opentopodata.org/) · [Open-Elevation](https://open-elevation.com/) · [OpenTopography](https://opentopography.org/)
+- **OSM features**: © [OpenStreetMap](https://openstreetmap.org/copyright) contributors (ODbL)
+- **3D generation**: [TrailPrint3D](https://github.com/EmGi96/TrailPrint3D) by EmGi (GPL-3.0)
+
+Generated 3D models are **commercially usable** under the TrailPrint3D license.
 
 [Slightly outdated Video Tutorial](https://www.youtube.com/watch?v=2NzwC3188HY&t=242s)
 

@@ -1,0 +1,110 @@
+version: "3.9"
+
+# ── Shared env block for backend + worker ────────────────────────────────────
+x-backend-env: &backend-env
+  REDIS_URL: redis://redis:6379/0
+  OUTPUT_DIR: /app/data
+  CACHE_DIR: /app/.cache
+  BLENDER_EXECUTABLE_PATH: /opt/blender/blender
+  ELEVATION_DATA_SOURCE: TERRAIN-TILES
+  TERRAIN_RESOLUTION: "4"
+  MAX_UPLOAD_SIZE_MB: "50"
+  OPENTOPODATA_URL: https://api.opentopodata.org/v1/
+  OPENTOPOGRAPHY_API_KEY: ""
+  OVERPASS_URL: https://overpass-api.de/api/interpreter
+  ADDON_SRC_DIR: /app/TrailPrint3D
+  PYTHONPATH: /app
+  PYTHONUNBUFFERED: "1"
+
+services:
+  # ── Frontend ───────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    environment:
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/').on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ── Backend API ────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - data:/app/data
+      - cache:/app/.cache
+    environment:
+      <<: *backend-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  # ── Celery worker (runs headless Blender jobs) ─────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: >
+      celery -A backend.tasks.celery_app worker
+      --loglevel=info
+      --concurrency=1
+      -Q celery
+    volumes:
+      - data:/app/data
+      - cache:/app/.cache
+    environment:
+      <<: *backend-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 6g
+          cpus: "2.0"
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  data:
+    driver: local
+  cache:
+    driver: local
+  redis_data:
+    driver: local
