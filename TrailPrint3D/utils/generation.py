@@ -1200,12 +1200,13 @@ def runGeneration(type, locked_scale=None):
             if shapeRotation != 0:
                 textobj.rotation_euler[2] += shapeRotation * (3.14159265 / 180)
 
-    # --- Material preview mode ---
-    for area in bpy.context.screen.areas:
-        if area.type == 'VIEW_3D':
-            for space in area.spaces:
-                if space.type == 'VIEW_3D':
-                    space.shading.type = 'MATERIAL'
+    # --- Material preview mode (viewport only, no-op in headless mode) ---
+    if hasattr(bpy.context, 'screen') and bpy.context.screen:
+        for area in bpy.context.screen.areas:
+            if area.type == 'VIEW_3D':
+                for space in area.spaces:
+                    if space.type == 'VIEW_3D':
+                        space.shading.type = 'MATERIAL'
 
     # Apply BASE material to the map mesh
     mat = bpy.data.materials.get("BASE")

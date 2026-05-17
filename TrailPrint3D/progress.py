@@ -11,21 +11,122 @@ Usage:
     overlay.start()
     overlay.update(percent=0.5, phase="Fetching Elevation", message="Tile 5/10")
     overlay.finish()
+
+In headless/web mode (TP3D_HEADLESS env var set) the module-level
+ProgressOverlay and SubprocessProgress are replaced with _HeadlessOverlay,
+which writes JSON progress lines to stdout for the Celery worker to capture.
 """
 
 import math
 import time
 import json
+import os
 import pathlib
 import subprocess
 import sys
 import tempfile
-import bpy
-import gpu
-import blf
-from gpu_extras.batch import batch_for_shader
+
+_HEADLESS = bool(os.environ.get('TP3D_HEADLESS'))
+
+if not _HEADLESS:
+    import bpy
+    import gpu
+    import blf
+    from gpu_extras.batch import batch_for_shader
 
 _CREATE_NO_WINDOW = 0x08000000 if sys.platform == 'win32' else 0
+
+
+# ---------------------------------------------------------------------------
+# Headless overlay — writes JSON progress lines to stdout
+# ---------------------------------------------------------------------------
+
+class _HeadlessOverlay:
+    """Drop-in replacement for ProgressOverlay / SubprocessProgress.
+
+    All progress is emitted as JSON objects to stdout so the Celery worker
+    (or any parent process) can parse them line-by-line.
+    """
+
+    _instance = None
+
+    @classmethod
+    def get(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    # ------------------------------------------------------------------
+    # Core lifecycle
+
+    def start(self):
+        self._emit({'type': 'progress', 'percent': 0.0,
+                    'phase': 'Starting', 'message': ''})
+
+    def update(self, percent=0.0, phase='', message='',
+               sub_percent=None, sub_label=None, steps=None,
+               fetch_items=None, map_preview=None):
+        self._emit({
+            'type':    'progress',
+            'percent': float(percent),
+            'phase':   str(phase),
+            'message': str(message),
+        })
+
+    def finish(self, map_preview=None):
+        self._emit({'type': 'progress', 'percent': 1.0,
+                    'phase': 'Done', 'message': ''})
+
+    # ------------------------------------------------------------------
+    # Step / fetch helpers
+
+    def add_completed_step(self, step):
+        self._emit({'type': 'step', 'step': step})
+
+    def set_fetch_items(self, items):
+        pass  # no-op in headless mode
+
+    def set_fetch_progress(self, key, percent):
+        pass  # no-op in headless mode
+
+    def set_fetch_done(self, key, success=True):
+        label = 'done' if success else 'failed'
+        self._emit({'type': 'step', 'step': f'{key}: {label}'})
+
+    def set_fetch_empty(self, key):
+        pass  # no-op in headless mode
+
+    def set_map_preview(self, data):
+        pass  # no-op in headless mode
+
+    # ------------------------------------------------------------------
+    # Cancellation
+
+    def is_cancel_requested(self):
+        job_id = os.environ.get('TP3D_JOB_ID')
+        if not job_id:
+            return False
+        try:
+            import redis
+            r = redis.Redis.from_url(
+                os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+            )
+            return bool(r.exists(f'job:{job_id}:cancel'))
+        except Exception:
+            return False
+
+    # ------------------------------------------------------------------
+
+    def _emit(self, data):
+        print(json.dumps(data), flush=True)
+
+    # ------------------------------------------------------------------
+    # WarningsOverlay compatibility — class-level method used as mixin
+
+    @classmethod
+    def add_warning(cls, msg, icon='warn'):
+        print(json.dumps({'type': 'warning', 'message': msg, 'level': icon}),
+              flush=True)
 
 
 class SubprocessProgress:
@@ -560,37 +661,38 @@ class WarningsOverlay:
         gpu.state.blend_set('NONE')
 
 
-class TP3D_OT_warnings_mouse(bpy.types.Operator):
-    """Modal that dismisses the warnings overlay on any mouse click."""
-    bl_idname  = "tp3d.warnings_mouse"
-    bl_label   = "Warnings Mouse Watcher"
-    bl_options = {'INTERNAL'}
+if not _HEADLESS:
+    class TP3D_OT_warnings_mouse(bpy.types.Operator):
+        """Modal that dismisses the warnings overlay on any mouse click."""
+        bl_idname  = "tp3d.warnings_mouse"
+        bl_label   = "Warnings Mouse Watcher"
+        bl_options = {'INTERNAL'}
 
-    def modal(self, context, event):
-        overlay = WarningsOverlay.get()
-        if not overlay.active:
-            return {'CANCELLED'}
-        if event.type in {'LEFTMOUSE', 'RIGHTMOUSE', 'MIDDLEMOUSE'} and event.value == 'PRESS':
-            overlay.finish()
-            return {'CANCELLED'}
-        return {'PASS_THROUGH'}
+        def modal(self, context, event):
+            overlay = WarningsOverlay.get()
+            if not overlay.active:
+                return {'CANCELLED'}
+            if event.type in {'LEFTMOUSE', 'RIGHTMOUSE', 'MIDDLEMOUSE'} and event.value == 'PRESS':
+                overlay.finish()
+                return {'CANCELLED'}
+            return {'PASS_THROUGH'}
 
-    def invoke(self, context, event):
-        context.window_manager.modal_handler_add(self)
-        return {'RUNNING_MODAL'}
+        def invoke(self, context, event):
+            context.window_manager.modal_handler_add(self)
+            return {'RUNNING_MODAL'}
 
 
-def _invoke_warnings_modal():
-    """Called via timer so a valid window context exists."""
-    try:
-        bpy.ops.tp3d.warnings_mouse('INVOKE_DEFAULT')
-    except Exception:
-        pass
-    return None  # one-shot
+    def _invoke_warnings_modal():
+        """Called via timer so a valid window context exists."""
+        try:
+            bpy.ops.tp3d.warnings_mouse('INVOKE_DEFAULT')
+        except Exception:
+            pass
+        return None  # one-shot
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# GPU / viewport helpers (Blender-only)
 # ---------------------------------------------------------------------------
 
 def _force_redraw():
@@ -712,3 +814,50 @@ def _text_right(text, x, y, size, color):
     blf.color(0, *color)
     blf.position(0, x - w, y, 0)
     blf.draw(0, text)
+
+
+# ---------------------------------------------------------------------------
+# Headless monkey-patch
+# ---------------------------------------------------------------------------
+# When running inside `blender --background` with TP3D_HEADLESS=1 we replace
+# the Blender-UI-dependent singletons with _HeadlessOverlay so all callers
+# (which do ProgressOverlay.get() / SubprocessProgress.get()) transparently
+# get JSON-to-stdout behaviour without any code changes in the generation
+# pipeline.
+# The original class definitions above are kept intact so the Blender addon
+# can still import and use them normally.
+
+if _HEADLESS:
+    ProgressOverlay    = _HeadlessOverlay
+    SubprocessProgress = _HeadlessOverlay
+
+    # Patch WarningsOverlay.add_warning to emit JSON instead of queuing
+    # for the GPU overlay (WarningsOverlay class may not exist yet if this
+    # module is imported before bpy is available, but the class IS defined
+    # above when _HEADLESS is False — when _HEADLESS is True we skip the bpy
+    # import, so WarningsOverlay won't have been defined; we create a minimal
+    # stub so callers that do `from .progress import WarningsOverlay` still work).
+    class WarningsOverlay:  # type: ignore[no-redef]
+        """Headless stub for WarningsOverlay."""
+        _messages = []
+
+        @classmethod
+        def add_warning(cls, message, icon='warn'):
+            print(json.dumps({'type': 'warning', 'message': message,
+                              'level': icon}), flush=True)
+            cls._messages.append((message, icon))
+
+        @classmethod
+        def clear(cls):
+            cls._messages.clear()
+
+        # No-op show/finish — there is no viewport in headless mode
+        @classmethod
+        def get(cls):
+            return cls()
+
+        def show(self):
+            pass
+
+        def finish(self):
+            pass

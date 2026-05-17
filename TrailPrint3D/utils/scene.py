@@ -1,3 +1,4 @@
+import os
 import bpy  # type: ignore
 import bmesh  # type: ignore
 import random
@@ -342,10 +343,11 @@ def getHighestLowest(obj):
     return lowest_z, highest_z
 
 def show_message_box(message, ic = "ERROR", ti = "ERROR"):
-    def draw(self, context):
-        self.layout.label(text=message)
     print(message)
-    bpy.context.window_manager.popup_menu(draw, title=ti, icon=ic)
+    if not os.environ.get('TP3D_HEADLESS'):
+        def draw(self, context):
+            self.layout.label(text=message)
+        bpy.context.window_manager.popup_menu(draw, title=ti, icon=ic)
 
 
 def toggle_console():
