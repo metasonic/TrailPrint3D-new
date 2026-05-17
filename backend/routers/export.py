@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from pathlib import Path
@@ -12,9 +13,11 @@ from ..config import get_settings
 from ..models.schemas import ExportRequest, ExportResponse, JobStatus
 
 router = APIRouter(prefix="/api", tags=["export"])
+logger = logging.getLogger(__name__)
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-_SAFE_FILENAME_RE = re.compile(r"^[0-9a-zA-Z_\-]+\.(stl|obj|3mf|glb)$")
+# Case-insensitive so Blender's uppercase .STL/.OBJ outputs are accepted
+_SAFE_FILENAME_RE = re.compile(r"^[0-9a-zA-Z_\-]+\.(stl|obj|3mf|glb)$", re.IGNORECASE)
 
 
 def _validate_uuid(value: str, field: str) -> None:
@@ -47,8 +50,9 @@ async def start_export(body: ExportRequest):
             mapping={"status": "pending", "progress": "0", "message": "Queued", "files": "[]"},
         )
         r.expire(f"job:{job_id}", 86400)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Queue unavailable: {exc}")
+    except Exception:
+        logger.exception("Redis unavailable when creating job %s", job_id)
+        raise HTTPException(status_code=503, detail="Queue temporarily unavailable")
 
     from ..tasks.export_task import export_model
 
@@ -69,8 +73,9 @@ async def get_job_status(job_id: str):
 
         r = _redis.from_url(str(cfg.REDIS_URL))
         data = r.hgetall(f"job:{job_id}")
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Queue unavailable: {exc}")
+    except Exception:
+        logger.exception("Redis unavailable when fetching job %s", job_id)
+        raise HTTPException(status_code=503, detail="Queue temporarily unavailable")
 
     if not data:
         raise HTTPException(status_code=404, detail=f"Job {job_id!r} not found")

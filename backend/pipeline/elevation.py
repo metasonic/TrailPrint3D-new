@@ -10,6 +10,7 @@ import json
 import math
 import os
 import struct
+import threading
 import time
 import zlib
 from dataclasses import dataclass, field
@@ -47,34 +48,39 @@ class ElevationConfig:
 
 
 # ---------------------------------------------------------------------------
-# In-memory + disk elevation cache
+# In-memory + disk elevation cache — protected by a lock for thread safety
+# under asyncio.to_thread concurrency.
 # ---------------------------------------------------------------------------
 
 _cache: dict[str, float] = {}
+_cache_lock = threading.Lock()
 
 
 def _load_cache(config: ElevationConfig) -> None:
     global _cache
     p = config.elevation_cache_file
-    if p.exists():
-        try:
-            _cache = json.loads(p.read_text())
-        except Exception:
+    with _cache_lock:
+        if p.exists():
+            try:
+                _cache = json.loads(p.read_text())
+            except Exception:
+                _cache = {}
+        else:
             _cache = {}
-    else:
-        _cache = {}
 
 
 def _save_cache(config: ElevationConfig) -> None:
     p = config.elevation_cache_file
     p.parent.mkdir(parents=True, exist_ok=True)
-    max_size = 50000
-    if len(_cache) > max_size:
-        keys = list(_cache.keys())
-        for k in keys[:-max_size]:
-            del _cache[k]
+    with _cache_lock:
+        max_size = 50000
+        if len(_cache) > max_size:
+            keys = list(_cache.keys())
+            for k in keys[:-max_size]:
+                del _cache[k]
+        snapshot = dict(_cache)
     try:
-        p.write_text(json.dumps(_cache))
+        p.write_text(json.dumps(snapshot))
     except Exception:
         pass
 
@@ -84,13 +90,15 @@ def _cache_key(lat: float, lon: float, api_type: str = "tt") -> str:
 
 
 def _get_cached(lat: float, lon: float, api_type: str = "tt") -> Optional[float]:
-    if not _cache:
-        return None
-    return _cache.get(_cache_key(lat, lon, api_type))
+    with _cache_lock:
+        if not _cache:
+            return None
+        return _cache.get(_cache_key(lat, lon, api_type))
 
 
 def _set_cached(lat: float, lon: float, elevation: float, api_type: str = "tt") -> None:
-    _cache[_cache_key(lat, lon, api_type)] = elevation
+    with _cache_lock:
+        _cache[_cache_key(lat, lon, api_type)] = elevation
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +144,8 @@ def _parse_png_rgb(png_bytes: bytes) -> list[list[tuple[int, int, int]]]:
         offset += 12 + length
         if chunk == b"IHDR":
             width, height, bit_depth, color_type = struct.unpack(">IIBB", data[:10])
-            assert bit_depth == 8 and color_type == 2
+            if bit_depth != 8 or color_type != 2:
+                raise ValueError(f"Unsupported PNG format: bit_depth={bit_depth}, color_type={color_type} (expected 8-bit RGB)")
         elif chunk == b"IDAT":
             idat += data
         elif chunk == b"IEND":

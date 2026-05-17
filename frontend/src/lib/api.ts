@@ -1,6 +1,7 @@
 const API_BASE = import.meta.env.PUBLIC_API_URL ?? "http://localhost:8000";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const POLL_TIMEOUT_MS = 5_000;
 
 async function fetchWithTimeout(
   url: string,
@@ -10,16 +11,24 @@ async function fetchWithTimeout(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  // If the caller already provides a signal, abort when either fires
-  const onOuterAbort = () => controller.abort();
-  outerSignal?.addEventListener("abort", onOuterAbort);
+  // If the caller already has an AbortSignal, propagate it.
+  // Handle the case where outerSignal is ALREADY aborted before this call.
+  if (outerSignal?.aborted) {
+    controller.abort();
+  } else {
+    outerSignal?.addEventListener("abort", () => controller.abort(), { once: true });
+  }
 
   try {
     return await fetch(url, { ...rest, signal: controller.signal });
   } finally {
     clearTimeout(timer);
-    outerSignal?.removeEventListener("abort", onOuterAbort);
   }
+}
+
+function parseError(res: Response, fallback: string): string {
+  // Include HTTP status code so the message is never empty under HTTP/2
+  return `HTTP ${res.status}: ${res.statusText || fallback}`;
 }
 
 export interface TrackStats {
@@ -30,7 +39,7 @@ export interface TrackStats {
   max_lat: number;
   min_lon: number;
   max_lon: number;
-  date: string;
+  date?: string;
 }
 
 export interface UploadResponse {
@@ -92,8 +101,8 @@ export async function uploadFile(file: File, signal?: AbortSignal): Promise<Uplo
     timeoutMs: 60_000,
   });
   if (!res.ok) {
-    const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(detail.detail ?? "Upload failed");
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? parseError(res, "Upload failed"));
   }
   return res.json();
 }
@@ -111,8 +120,8 @@ export async function generatePreview(
     timeoutMs: 120_000,
   });
   if (!res.ok) {
-    const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(detail.detail ?? "Preview generation failed");
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? parseError(res, "Preview generation failed"));
   }
   return res.json();
 }
@@ -135,15 +144,18 @@ export async function startExport(
     signal,
   });
   if (!res.ok) {
-    const detail = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(detail.detail ?? "Export failed");
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? parseError(res, "Export failed"));
   }
   return res.json();
 }
 
 export async function getJobStatus(jobId: string, signal?: AbortSignal): Promise<JobStatus> {
-  const res = await fetchWithTimeout(`${API_BASE}/api/job/${jobId}`, { signal });
-  if (!res.ok) throw new Error("Could not fetch job status");
+  const res = await fetchWithTimeout(`${API_BASE}/api/job/${jobId}`, {
+    signal,
+    timeoutMs: POLL_TIMEOUT_MS,
+  });
+  if (!res.ok) throw new Error(parseError(res, "Could not fetch job status"));
   return res.json();
 }
 

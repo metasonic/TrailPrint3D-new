@@ -5,12 +5,21 @@ print-ready STL / OBJ / 3MF files using the original addon code.
 from __future__ import annotations
 
 import json
+import logging
+import os
+import re
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 from .celery_app import app
+
+logger = logging.getLogger(__name__)
+
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_SAFE_FILENAME_RE = re.compile(r"^[0-9a-zA-Z_\-]+\.(stl|obj|3mf|glb)$", re.IGNORECASE)
+BLENDER_TIMEOUT = 600  # hard cap on headless generation (seconds)
 
 
 def _update_job(redis_url: str, job_id: str, **fields):
@@ -20,9 +29,9 @@ def _update_job(redis_url: str, job_id: str, **fields):
 
         r = _redis.from_url(redis_url)
         r.hset(f"job:{job_id}", mapping={k: str(v) for k, v in fields.items()})
-        r.expire(f"job:{job_id}", 86400)  # 24 h TTL
-    except Exception as exc:
-        print(f"[export_task] redis update failed: {exc}", file=sys.stderr)
+        r.expire(f"job:{job_id}", 86400)
+    except Exception:
+        logger.exception("Redis update failed for job %s", job_id)
 
 
 @app.task(bind=True, name="tasks.export_task.export_model")
@@ -36,7 +45,13 @@ def export_model(
     from backend.config import get_settings
 
     cfg = get_settings()
-    redis_url = str(cfg.REDIS_URL) if hasattr(cfg.REDIS_URL, "__str__") else "redis://localhost:6379/0"
+    redis_url = str(cfg.REDIS_URL)
+
+    # Defence-in-depth: re-validate IDs even though the router already checked them.
+    # A compromised Redis broker could enqueue tasks with malicious path components.
+    if not _UUID_RE.match(job_id) or not _UUID_RE.match(file_id):
+        logger.error("Invalid job_id or file_id received by Celery task: job=%s file=%s", job_id, file_id)
+        return {"status": "failed", "error": "Invalid task arguments"}
 
     job_dir = cfg.OUTPUT_DIR / "jobs" / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -45,7 +60,6 @@ def export_model(
 
     gpx_path = cfg.OUTPUT_DIR / "uploads" / f"{file_id}.gpx"
     if not gpx_path.exists():
-        # Try .igc
         gpx_path = cfg.OUTPUT_DIR / "uploads" / f"{file_id}.igc"
 
     config_payload = {
@@ -55,7 +69,6 @@ def export_model(
         "export_format": export_format,
         "addon_src_dir": str(cfg.ADDON_SRC_DIR.parent),
         "settings": {
-            # Map GenerationSettings fields to addon's bpy property names
             "shape": settings_dict.get("shape", "HEXAGON"),
             "objSize": settings_dict.get("obj_size_mm", 100),
             "scaleElevation": settings_dict.get("elevation_scale", 1.0),
@@ -91,11 +104,10 @@ def export_model(
             "el_oActive": settings_dict.get("include_ocean", False),
             "disableCache": False,
             "apiRetries": 5,
-            # Cache dirs
             "opentopoAdress": str(getattr(cfg, "OPENTOPODATA_URL", "https://api.opentopodata.org/v1/")),
         },
         "cache_dir": str(cfg.CACHE_DIR),
-        "opentopography_api_key": cfg.OPENTOPOGRAPHY_API_KEY,
+        # API key is NOT stored in this file — it is passed as an environment variable
     }
 
     config_file = job_dir / "config.json"
@@ -103,6 +115,12 @@ def export_model(
 
     headless_script = Path(__file__).parent.parent / "blender" / "headless_generate.py"
     blender_exe = str(cfg.BLENDER_EXECUTABLE_PATH)
+
+    if not Path(blender_exe).exists():
+        _update_job(redis_url, job_id, status="failed",
+                    error=f"Blender not found at configured path")
+        logger.error("Blender not found at %s", blender_exe)
+        return {"status": "failed"}
 
     cmd = [
         blender_exe,
@@ -112,15 +130,11 @@ def export_model(
         str(config_file),
     ]
 
-    # Validate Blender executable exists before dispatching
-    if not Path(blender_exe).exists():
-        _update_job(redis_url, job_id, status="failed",
-                    error=f"Blender not found at {blender_exe!r}")
-        return {"status": "failed"}
+    # Pass API key via environment variable, not config file on disk
+    proc_env = dict(os.environ)
+    proc_env["OPENTOPOGRAPHY_API_KEY"] = cfg.OPENTOPOGRAPHY_API_KEY
 
     _update_job(redis_url, job_id, status="running", progress=0, message="Starting Blender...")
-
-    BLENDER_TIMEOUT = 600  # seconds — hard cap on headless generation
 
     try:
         proc = subprocess.Popen(
@@ -128,44 +142,73 @@ def export_model(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            env=proc_env,
         )
 
-        log_file = job_dir / "blender.log"
-        with open(log_file, "w") as lf:
-            for line in proc.stdout:
-                lf.write(line)
-                lf.flush()
-                # Parse progress hints from headless script stdout
-                line = line.strip()
-                if line.startswith("PROGRESS:"):
-                    try:
-                        pct = int(line.split(":")[1].strip())
-                        _update_job(redis_url, job_id, progress=pct)
-                    except ValueError:
-                        pass
-                elif line.startswith("STATUS:"):
-                    msg = line[7:].strip()
-                    _update_job(redis_url, job_id, message=msg)
+        # Drain stdout in a thread while enforcing a hard timeout.
+        # The naive "for line in proc.stdout + proc.wait(timeout=N)" pattern
+        # does NOT enforce the timeout: the for-loop blocks until EOF regardless.
+        import queue, threading
 
-        try:
-            proc.wait(timeout=BLENDER_TIMEOUT)
-        except subprocess.TimeoutExpired:
+        output_lines: list[str] = []
+
+        def _drain():
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                output_lines.append(line)
+
+        drain_thread = threading.Thread(target=_drain, daemon=True)
+        drain_thread.start()
+        drain_thread.join(timeout=BLENDER_TIMEOUT)
+
+        if drain_thread.is_alive():
             proc.kill()
-            proc.wait()
+            drain_thread.join(timeout=5)
             _update_job(redis_url, job_id, status="failed",
                         error=f"Blender timed out after {BLENDER_TIMEOUT}s")
             return {"status": "failed"}
 
+        proc.wait()
+
+        # Write log and parse progress for Redis after drain completes
+        log_file = job_dir / "blender.log"
+        with open(log_file, "w") as lf:
+            for line in output_lines:
+                lf.write(line)
+                stripped = line.strip()
+                if stripped.startswith("PROGRESS:"):
+                    try:
+                        pct = int(stripped.split(":")[1].strip())
+                        _update_job(redis_url, job_id, progress=pct)
+                    except ValueError:
+                        pass
+                elif stripped.startswith("STATUS:"):
+                    # Sanitise message: printable ASCII only, max 200 chars
+                    msg = stripped[7:].strip()
+                    msg = "".join(c for c in msg if c.isprintable())[:200]
+                    _update_job(redis_url, job_id, message=msg)
+
         if proc.returncode != 0:
-            _update_job(redis_url, job_id, status="failed", error=f"Blender exited with code {proc.returncode}")
+            _update_job(redis_url, job_id, status="failed",
+                        error=f"Blender exited with code {proc.returncode}")
             return {"status": "failed"}
 
-        # Collect output files
-        output_files = list(export_dir.glob("*"))
+        # Collect and validate output files before marking done
+        output_files = [
+            f for f in export_dir.glob("*")
+            if _SAFE_FILENAME_RE.match(f.name)
+        ]
+        if not output_files:
+            _update_job(redis_url, job_id, status="failed",
+                        error="Blender produced no output files")
+            return {"status": "failed"}
+
         file_names = [f.name for f in output_files]
-        _update_job(redis_url, job_id, status="done", progress=100, files=json.dumps(file_names))
+        _update_job(redis_url, job_id, status="done", progress=100,
+                    files=json.dumps(file_names))
         return {"status": "done", "files": file_names}
 
     except Exception as exc:
-        _update_job(redis_url, job_id, status="failed", error=str(exc))
+        logger.exception("Export task failed for job %s", job_id)
+        _update_job(redis_url, job_id, status="failed", error="Internal export error")
         raise

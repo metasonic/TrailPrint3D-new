@@ -59,14 +59,17 @@ export default function TrailPrintApp() {
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
   const [exportFormat, setExportFormat] = useState<"STL" | "OBJ" | "3MF">("STL");
 
-  // Debounce slider-driven settings to avoid firing an API call on every tick
+  // Debounce settings so slider drags don't fire a request on every tick
   const debouncedSettings = useDebounce(settings, 500);
 
   const previewAbortRef = useRef<AbortController | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Generation counter prevents orphaned intervals from a rapid double-click
+  const exportGenRef = useRef(0);
+  // Track which fileId has already had its initial preview triggered
+  const lastPreviewedFileIdRef = useRef<string | null>(null);
 
   const handlePreview = useCallback(async (fid: string, s: GenerationSettings) => {
-    // Cancel any in-flight preview request
     previewAbortRef.current?.abort();
     const controller = new AbortController();
     previewAbortRef.current = controller;
@@ -80,11 +83,26 @@ export default function TrailPrintApp() {
       }
     } catch (e: unknown) {
       if (e instanceof Error && e.name === "AbortError") return;
-      setPreviewError(e instanceof Error ? e.message : "Preview failed");
+      if (!controller.signal.aborted) {
+        setPreviewError(e instanceof Error ? e.message : "Preview failed");
+      }
     } finally {
       if (!controller.signal.aborted) setPreviewLoading(false);
     }
   }, []);
+
+  // Auto-regenerate preview when debounced settings change — but skip the
+  // first trigger right after a new file is uploaded (handleFile already runs it).
+  useEffect(() => {
+    if (!fileId) return;
+    if (fileId !== lastPreviewedFileIdRef.current) {
+      // New file — handleFile triggered the initial preview; just record it
+      lastPreviewedFileIdRef.current = fileId;
+      return;
+    }
+    handlePreview(fileId, debouncedSettings);
+  // handlePreview is stable (useCallback []); include it for exhaustive-deps correctness
+  }, [debouncedSettings, fileId, handlePreview]);
 
   const handleFile = useCallback(async (file: File) => {
     setUploadError(null);
@@ -95,49 +113,61 @@ export default function TrailPrintApp() {
       const res = await uploadFile(file);
       setFileId(res.file_id);
       setTrackStats(res.track_stats);
+      // Trigger initial preview immediately (before debouncedSettings catches up)
       await handlePreview(res.file_id, settings);
     } catch (e: unknown) {
       setUploadError(e instanceof Error ? e.message : "Upload failed");
     }
   }, [settings, handlePreview]);
 
-  const handleRegenerate = () => {
+  const handleRegenerate = useCallback(() => {
     if (fileId) handlePreview(fileId, settings);
-  };
+  }, [fileId, settings, handlePreview]);
 
   const updateSetting = <K extends keyof GenerationSettings>(
     key: K,
     value: GenerationSettings[K]
   ) => setSettings((s) => ({ ...s, [key]: value }));
 
-  const clearPoll = () => {
+  const clearPoll = useCallback(() => {
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
-  };
+  }, []);
 
-  const handleExport = async (fmt: "STL" | "OBJ" | "3MF") => {
+  const handleExport = useCallback(async (fmt: "STL" | "OBJ" | "3MF") => {
     if (!fileId) return;
     clearPoll();
+
+    // Increment generation counter — any interval from a previous click will
+    // see the mismatch and self-terminate rather than clearing the new interval.
+    const gen = ++exportGenRef.current;
+
     setJobStatus({ job_id: "", status: "pending", progress: 0, message: "Starting…", files: [] });
     try {
       const { job_id } = await startExport(fileId, settings, fmt);
+
+      // Bail if a newer export click superseded this one while awaiting
+      if (gen !== exportGenRef.current) return;
+
       setJobStatus((s) => (s ? { ...s, job_id } : null));
 
-      // Single interval stored in ref — no accumulation across clicks
       pollRef.current = setInterval(async () => {
+        if (gen !== exportGenRef.current) {
+          clearInterval(pollRef.current!);
+          return;
+        }
         try {
           const status = await getJobStatus(job_id);
           setJobStatus(status);
-          if (status.status === "done" || status.status === "failed") {
-            clearPoll();
-          }
+          if (status.status === "done" || status.status === "failed") clearPoll();
         } catch {
-          // network hiccup — keep polling
+          // Network hiccup — keep polling
         }
       }, 2000);
     } catch (e: unknown) {
+      if (gen !== exportGenRef.current) return;
       setJobStatus({
         job_id: "",
         status: "failed",
@@ -147,10 +177,13 @@ export default function TrailPrintApp() {
         files: [],
       });
     }
-  };
+  }, [fileId, settings, clearPoll]);
 
-  // Clean up on unmount
-  useEffect(() => () => { clearPoll(); previewAbortRef.current?.abort(); }, []);
+  // Cleanup on unmount
+  useEffect(() => () => {
+    clearPoll();
+    previewAbortRef.current?.abort();
+  }, [clearPoll]);
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -172,8 +205,13 @@ export default function TrailPrintApp() {
           onClick={() => document.getElementById("file-input")?.click()}
           role="button"
           tabIndex={0}
-          aria-label="Drop a GPX or IGC file here, or click to browse"
-          onKeyDown={(e) => e.key === "Enter" && document.getElementById("file-input")?.click()}
+          aria-label="Drop a GPX or IGC file here, or press Enter or Space to browse"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              document.getElementById("file-input")?.click();
+            }
+          }}
         >
           <input
             id="file-input"
@@ -303,18 +341,18 @@ export default function TrailPrintApp() {
       </aside>
 
       {/* ── Preview ── */}
-      <main className="preview-area">
+      <section className="preview-area" aria-label="3D terrain preview">
         <Preview3D
           glbUrl={glbUrl}
           loading={previewLoading}
           onError={(msg) => setPreviewError(msg)}
         />
-      </main>
+      </section>
 
       {/* ── Download panel ── */}
       {fileId && (
         <footer className="download-panel">
-          <div className="export-buttons">
+          <div className="export-buttons" role="group" aria-label="Export format">
             <span>Export as:</span>
             {(["STL", "OBJ", "3MF"] as const).map((fmt) => (
               <button
@@ -322,7 +360,7 @@ export default function TrailPrintApp() {
                 className={`btn-export${exportFormat === fmt ? " active" : ""}`}
                 onClick={() => { setExportFormat(fmt); handleExport(fmt); }}
                 disabled={jobStatus?.status === "running" || jobStatus?.status === "pending"}
-                aria-pressed={exportFormat === fmt}
+                aria-current={exportFormat === fmt ? "true" : undefined}
               >
                 {fmt}
               </button>
@@ -330,8 +368,14 @@ export default function TrailPrintApp() {
           </div>
 
           {jobStatus && (
-            <div className="job-status" role="status" aria-live="polite">
-              <div className="progress-bar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={jobStatus.progress} role="progressbar">
+            <div className="job-status" role="status" aria-live="polite" aria-atomic="true">
+              <div
+                className="progress-bar"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={jobStatus.progress}
+              >
                 <div
                   className={`progress-fill ${jobStatus.status}`}
                   style={{ width: `${jobStatus.progress}%` }}
@@ -346,12 +390,7 @@ export default function TrailPrintApp() {
               </span>
               {jobStatus.status === "done" &&
                 jobStatus.files.map((f) => (
-                  <a
-                    key={f}
-                    href={downloadUrl(jobStatus.job_id, f)}
-                    download={f}
-                    className="btn-download"
-                  >
+                  <a key={f} href={downloadUrl(jobStatus.job_id, f)} download={f} className="btn-download">
                     ↓ {f}
                   </a>
                 ))}

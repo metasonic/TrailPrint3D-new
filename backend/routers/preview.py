@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
-import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -13,8 +13,14 @@ from ..models.schemas import PreviewRequest, PreviewResponse
 from ..pipeline.elevation import ElevationConfig
 
 router = APIRouter(prefix="/api", tags=["preview"])
+logger = logging.getLogger(__name__)
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+# Cap concurrent preview generations to avoid exhausting the thread pool
+_preview_semaphore = asyncio.Semaphore(4)
+
+PREVIEW_TIMEOUT_S = 120.0
 
 
 def _validate_uuid(value: str, field: str) -> None:
@@ -36,7 +42,7 @@ async def generate_preview(body: PreviewRequest):
             break
 
     if gpx_path is None:
-        raise HTTPException(status_code=404, detail=f"File {body.file_id!r} not found")
+        raise HTTPException(status_code=404, detail="File not found")
 
     out_path = cfg.OUTPUT_DIR / "preview" / f"{body.file_id}.glb"
 
@@ -53,10 +59,16 @@ async def generate_preview(body: PreviewRequest):
     try:
         from ..pipeline.preview_export import generate_preview as _gen
 
-        # Run blocking I/O in a thread so the event loop stays free
-        terrain_stats = await asyncio.to_thread(_gen, gpx_path, settings, out_path, elev_cfg)
+        async with _preview_semaphore:
+            terrain_stats = await asyncio.wait_for(
+                asyncio.to_thread(_gen, gpx_path, settings, out_path, elev_cfg),
+                timeout=PREVIEW_TIMEOUT_S,
+            )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Preview generation timed out")
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Preview generation failed: {exc}")
+        logger.exception("Preview generation failed for file_id=%s", body.file_id)
+        raise HTTPException(status_code=500, detail="Preview generation failed")
 
     glb_url = f"/api/preview/{body.file_id}.glb"
     return PreviewResponse(glb_url=glb_url, terrain_stats=terrain_stats)
@@ -65,13 +77,11 @@ async def generate_preview(body: PreviewRequest):
 @router.get("/preview/{filename}")
 async def serve_preview(filename: str):
     cfg = get_settings()
-    # Only allow UUID.glb filenames
     name = filename[:-4] if filename.endswith(".glb") else ""
     if not name or not _UUID_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid filename")
-    path = cfg.OUTPUT_DIR / "preview" / filename
-    # Path jail: ensure resolved path stays inside preview dir
     preview_dir = (cfg.OUTPUT_DIR / "preview").resolve()
-    if not path.resolve().is_relative_to(preview_dir) or not path.exists():
+    path = (cfg.OUTPUT_DIR / "preview" / filename).resolve()
+    if not path.is_relative_to(preview_dir) or not path.exists():
         raise HTTPException(status_code=404, detail="Preview not found")
     return FileResponse(str(path), media_type="model/gltf-binary", filename=filename)

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -9,6 +9,13 @@ interface Props {
   onError?: (msg: string) => void;
 }
 
+function disposeMesh(mesh: THREE.Mesh) {
+  mesh.geometry.dispose();
+  const mat = mesh.material;
+  if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+  else mat.dispose();
+}
+
 export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -16,6 +23,7 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const modelGroupRef = useRef<THREE.Group | null>(null);
+  const gridRef = useRef<THREE.GridHelper | null>(null);
 
   // Initialize Three.js scene once
   useEffect(() => {
@@ -48,6 +56,7 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
     const grid = new THREE.GridHelper(400, 20, 0x333355, 0x222244);
     grid.position.y = -0.5;
     scene.add(grid);
+    gridRef.current = grid;
 
     const camera = new THREE.PerspectiveCamera(45, el.clientWidth / el.clientHeight, 0.01, 10000);
     camera.position.set(0, 150, 200);
@@ -83,6 +92,14 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
       cancelAnimationFrame(animId);
       ro.disconnect();
       controls.dispose();
+      // Dispose grid helper resources
+      if (gridRef.current) {
+        (gridRef.current.geometry as THREE.BufferGeometry).dispose();
+        const mat = gridRef.current.material;
+        if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+        else (mat as THREE.Material).dispose();
+        gridRef.current = null;
+      }
       renderer.dispose();
       el.removeChild(renderer.domElement);
     };
@@ -92,16 +109,11 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
   useEffect(() => {
     if (!sceneRef.current || !cameraRef.current || !controlsRef.current) return;
 
-    // Dispose old model to prevent geometry/material leaks
+    // Dispose old model fully — geometry, assigned materials, and any original
+    // GLTF materials that were overwritten without disposal.
     if (modelGroupRef.current) {
       modelGroupRef.current.traverse((child) => {
-        if ((child as THREE.Mesh).isMesh) {
-          const mesh = child as THREE.Mesh;
-          mesh.geometry.dispose();
-          const mat = mesh.material;
-          if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-          else mat.dispose();
-        }
+        if ((child as THREE.Mesh).isMesh) disposeMesh(child as THREE.Mesh);
       });
       sceneRef.current.remove(modelGroupRef.current);
       modelGroupRef.current = null;
@@ -109,16 +121,38 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
 
     if (!glbUrl) return;
 
+    // Cancellation flag: if glbUrl changes before this load completes, ignore
+    // the stale success callback to prevent duplicate scene objects.
+    let cancelled = false;
+
     const loader = new GLTFLoader();
     loader.load(
       glbUrl,
       (gltf) => {
+        if (cancelled) {
+          // Dispose resources from the stale load to avoid leaks
+          gltf.scene.traverse((child) => {
+            if ((child as THREE.Mesh).isMesh) {
+              const mesh = child as THREE.Mesh;
+              mesh.geometry.dispose();
+              const mat = mesh.material;
+              if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+              else mat.dispose();
+            }
+          });
+          return;
+        }
+
         const group = new THREE.Group();
         gltf.scene.traverse((child) => {
           if ((child as THREE.Mesh).isMesh) {
             const mesh = child as THREE.Mesh;
             mesh.castShadow = true;
             mesh.receiveShadow = true;
+            // Dispose the original GLTF material before replacing it
+            const origMat = mesh.material;
+            if (Array.isArray(origMat)) origMat.forEach((m) => m.dispose());
+            else origMat.dispose();
             mesh.material =
               child.name === "trail"
                 ? new THREE.MeshStandardMaterial({ color: 0xdc3232, roughness: 0.6, metalness: 0.1 })
@@ -136,39 +170,60 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
 
         controlsRef.current!.target.copy(center);
         cameraRef.current!.position.set(center.x, center.y + maxDim * 0.8, center.z + maxDim * 1.2);
+        // Only update projection matrix if aspect ratio changed, not on position moves
         cameraRef.current!.updateProjectionMatrix();
         controlsRef.current!.update();
       },
       undefined,
       (err) => {
+        if (cancelled) return;
         const msg = err instanceof Error ? err.message : "Failed to load 3D model";
         onError?.(msg);
       }
     );
+
+    return () => {
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [glbUrl]);
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <div ref={mountRef} style={{ width: "100%", height: "100%" }} aria-label="3D terrain preview" role="img" />
-      {loading && (
-        <div
-          role="status"
-          aria-live="polite"
-          style={{
-            position: "absolute",
-            inset: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "rgba(26,26,46,0.7)",
-            color: "#fff",
-            fontSize: "1rem",
-            gap: "0.5rem",
-          }}
-        >
-          <span className="spinner" aria-hidden="true" /> Generating preview…
-        </div>
-      )}
+      <div
+        ref={mountRef}
+        style={{ width: "100%", height: "100%" }}
+        aria-label="3D terrain preview canvas"
+        role="img"
+      />
+      {/* Persistent live region for loading announcements — always in DOM so NVDA/JAWS pick up changes */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        style={{
+          position: "absolute",
+          inset: loading ? 0 : undefined,
+          width: loading ? undefined : 1,
+          height: loading ? undefined : 1,
+          overflow: loading ? undefined : "hidden",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: loading ? "rgba(26,26,46,0.7)" : "transparent",
+          color: "#fff",
+          fontSize: "1rem",
+          gap: "0.5rem",
+          pointerEvents: loading ? undefined : "none",
+        }}
+      >
+        {loading && (
+          <>
+            <span className="spinner" aria-hidden="true" />
+            Generating preview…
+          </>
+        )}
+      </div>
       {!glbUrl && !loading && (
         <div
           aria-hidden="true"

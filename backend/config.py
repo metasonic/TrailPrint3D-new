@@ -1,4 +1,5 @@
 from pathlib import Path
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,6 +20,17 @@ class Settings(BaseSettings):
     ELEVATION_CACHE_SIZE: int = 50000
     ADDON_SRC_DIR: Path = Path("/app/TrailPrint3D")
     FRONTEND_URL: str = "http://localhost:3000"
+    # Set to "development" to enable /docs and /redoc endpoints
+    ENVIRONMENT: str = "production"
+
+    @field_validator("FRONTEND_URL")
+    @classmethod
+    def _validate_frontend_url(cls, v: str) -> str:
+        if v == "*" or not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError(
+                "FRONTEND_URL must be an absolute http(s):// URL — wildcards are not allowed"
+            )
+        return v.rstrip("/")
 
 
 _settings: Settings | None = None

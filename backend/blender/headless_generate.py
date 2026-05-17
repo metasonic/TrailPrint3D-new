@@ -4,12 +4,8 @@ Headless Blender runner for TrailPrint3D.
 Invocation:
   blender --background --python headless_generate.py -- /path/to/config.json
 
-This script:
-1. Reads the JSON job config
-2. Injects a mock bpy.context.scene.tp3d namespace from the config
-3. Loads the TrailPrint3D addon source
-4. Calls utils.runGeneration(0) to produce the terrain mesh
-5. Exports the result in the requested format
+The OpenTopography API key is read from the OPENTOPOGRAPHY_API_KEY environment
+variable (not from the config file) to avoid writing secrets to disk.
 """
 import sys
 import os
@@ -18,7 +14,6 @@ from pathlib import Path
 
 
 def main():
-    # The config file path is the first argument after '--'
     try:
         sep = sys.argv.index("--")
         config_path = Path(sys.argv[sep + 1])
@@ -33,29 +28,24 @@ def main():
     export_dir = config["export_dir"]
     export_format = config.get("export_format", "STL")
     cache_dir = config.get("cache_dir", "/app/.cache")
-    ot_api_key = config.get("opentopography_api_key", "")
+    # API key comes from environment, not config file (avoids secrets on disk)
+    ot_api_key = os.environ.get("OPENTOPOGRAPHY_API_KEY", "")
 
-    print("STATUS: Initializing Blender scene")
+    print("STATUS: Initializing Blender scene", flush=True)
 
     import bpy  # noqa: F401 — available in headless Blender
 
     # -----------------------------------------------------------------------
-    # Mock the addon preferences (get_prefs())
-    # -----------------------------------------------------------------------
-    class _MockPrefs:
-        openTopographyApiKey = ot_api_key
-        default_export_folder = export_dir + "/"
-
-    # -----------------------------------------------------------------------
-    # Mock bpy.context.scene.tp3d
+    # Build property dict for the addon
     # -----------------------------------------------------------------------
     class _MockTP3D(dict):
-        """Attribute-style dict that also satisfies the EnumProperty interface."""
+        """Attribute-style dict that satisfies addon's scene.tp3d reads."""
 
         def __getattr__(self, name):
-            if name in self:
+            try:
                 return self[name]
-            raise AttributeError(name)
+            except KeyError:
+                raise AttributeError(name)
 
         def __setattr__(self, name, value):
             self[name] = value
@@ -64,7 +54,6 @@ def main():
             return super().get(key, default)
 
     tp3d = _MockTP3D(settings)
-    # Ensure required output properties exist
     tp3d.setdefault("o_verticesPath", "")
     tp3d.setdefault("o_verticesMap", "")
     tp3d.setdefault("o_mapScale", "")
@@ -99,7 +88,6 @@ def main():
     tp3d.setdefault("selfHosted", "")
     tp3d.setdefault("ccacheSize", 50000)
     tp3d.setdefault("apiRetries", 5)
-    # Coloring / element defaults
     for key in [
         "col_wArea", "col_fArea", "col_scrArea", "col_cArea",
         "col_grArea", "col_faArea", "col_glArea",
@@ -143,58 +131,109 @@ def main():
     tp3d.setdefault("text_angle_preset", 0)
     tp3d.setdefault("svg_path", "")
 
-    # Override file/export paths
     tp3d["file_path"] = gpx_path
     tp3d["export_path"] = export_dir + "/"
 
+    # -----------------------------------------------------------------------
+    # Inject tp3d into bpy.context.scene.
+    #
+    # In a registered Blender addon, scene.tp3d is a bpy.props.PointerProperty
+    # and cannot be freely reassigned with `= mock_dict`. Two strategies:
+    #
+    # 1. Enable the addon via bpy.ops.preferences.addon_enable() so that the
+    #    PropertyGroup is registered, then set individual property values.
+    # 2. Fall back to setting each property value after addon registration.
+    #
+    # We store tp3d in the custom property bag (scene["tp3d"]) as a universal
+    # fallback that works regardless of the registration state.
+    # -----------------------------------------------------------------------
+    sys.path.insert(0, addon_src_dir)
+
     bpy.context.scene["tp3d"] = tp3d
-    bpy.context.scene.tp3d = tp3d  # type: ignore[attr-defined]
+
+    # Attempt to enable the addon so its PropertyGroup is registered,
+    # then copy our values onto the live PropertyGroup instance.
+    try:
+        result = bpy.ops.preferences.addon_enable(module="TrailPrint3D")
+        if "FINISHED" in result:
+            pg = bpy.context.scene.tp3d
+            for key, value in tp3d.items():
+                try:
+                    setattr(pg, key, value)
+                except (AttributeError, TypeError):
+                    pass  # read-only RNA props or type mismatch — skip
+    except Exception as exc:
+        print(f"WARNING: Could not enable addon via bpy.ops ({exc}). "
+              "Relying on custom property bag fallback.", flush=True)
 
     # -----------------------------------------------------------------------
     # Patch addon_preferences.get_prefs to return mock
     # -----------------------------------------------------------------------
-    sys.path.insert(0, addon_src_dir)
-    import TrailPrint3D.addon_preferences as _ap
-    _ap.get_prefs = lambda: _MockPrefs()
+    class _MockPrefs:
+        openTopographyApiKey = ot_api_key
+        default_export_folder = export_dir + "/"
+
+    try:
+        import TrailPrint3D.addon_preferences as _ap
+        _ap.get_prefs = lambda: _MockPrefs()
+    except ImportError as exc:
+        print(f"STATUS: FAILED — could not import TrailPrint3D: {exc}", flush=True)
+        sys.exit(1)
 
     # -----------------------------------------------------------------------
     # Patch progress overlay (no GPU in headless)
     # -----------------------------------------------------------------------
-    import TrailPrint3D.progress as _progress
-    class _NoopOverlay:
-        active = False
-        def update(self, **_): pass
-        def set_fetch_progress(self, *_, **__): pass
-        @classmethod
-        def get(cls): return cls()
-        @classmethod
-        def add_warning(cls, *_, **__): pass
-    _progress.ProgressOverlay = _NoopOverlay
-    _progress.WarningsOverlay = _NoopOverlay
+    try:
+        import TrailPrint3D.progress as _progress
+
+        class _NoopOverlay:
+            active = False
+            def update(self, **_): pass
+            def set_fetch_progress(self, *_, **__): pass
+            @classmethod
+            def get(cls): return cls()
+            @classmethod
+            def add_warning(cls, *_, **__): pass
+
+        _progress.ProgressOverlay = _NoopOverlay
+        _progress.WarningsOverlay = _NoopOverlay
+    except (ImportError, AttributeError):
+        pass
 
     # -----------------------------------------------------------------------
-    # Patch constants cache paths to use config cache_dir
+    # Patch constants cache paths to use configured cache_dir
     # -----------------------------------------------------------------------
-    import TrailPrint3D.constants as const
-    const.elevation_cache_file = os.path.join(cache_dir, "elevation", "cache.json")
-    const.overpass_cache_dir = os.path.join(cache_dir, "osm")
-    const.terrarium_cache_dir = os.path.join(cache_dir, "tiles")
-    os.makedirs(const.overpass_cache_dir, exist_ok=True)
-    os.makedirs(const.terrarium_cache_dir, exist_ok=True)
-    os.makedirs(os.path.dirname(const.elevation_cache_file), exist_ok=True)
+    try:
+        import TrailPrint3D.constants as const
+        const.elevation_cache_file = os.path.join(cache_dir, "elevation", "cache.json")
+        const.overpass_cache_dir = os.path.join(cache_dir, "osm")
+        const.terrarium_cache_dir = os.path.join(cache_dir, "tiles")
+        os.makedirs(const.overpass_cache_dir, exist_ok=True)
+        os.makedirs(const.terrarium_cache_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(const.elevation_cache_file), exist_ok=True)
+    except (ImportError, AttributeError):
+        pass
 
     # -----------------------------------------------------------------------
     # Run generation
     # -----------------------------------------------------------------------
-    print("STATUS: Running TrailPrint3D generation pipeline")
-    print("PROGRESS: 5")
+    print("STATUS: Running TrailPrint3D generation pipeline", flush=True)
+    print("PROGRESS: 5", flush=True)
 
-    from TrailPrint3D import utils
-    utils.runGeneration(0)
+    try:
+        from TrailPrint3D import utils
+        # runGeneration(0) — argument 0 selects the default single-trail generation mode.
+        # Verify against addon source if the mode enum changes in a future release.
+        utils.runGeneration(0)
+    except Exception as exc:
+        print(f"STATUS: FAILED — generation error: {exc}", flush=True)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
-    print("PROGRESS: 90")
-    print("STATUS: Export complete")
-    print("PROGRESS: 100")
+    print("PROGRESS: 95", flush=True)
+    print("STATUS: Export complete", flush=True)
+    print("PROGRESS: 100", flush=True)
 
 
 if __name__ == "__main__":

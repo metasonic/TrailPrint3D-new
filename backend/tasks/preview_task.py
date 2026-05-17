@@ -1,4 +1,10 @@
-"""Celery task for async preview generation (used when the synchronous path is too slow)."""
+"""
+Celery task for async preview generation.
+
+NOTE: The default preview path uses asyncio.to_thread in routers/preview.py
+for simplicity. Wire this task into the router if you need Celery-backed previews
+(e.g. for horizontal scaling across multiple workers).
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,7 +21,17 @@ def generate_preview(self, file_id: str, settings_dict: dict, out_dir: str) -> d
 
     cfg = get_settings()
     settings = GenerationSettings(**settings_dict)
-    gpx_path = cfg.OUTPUT_DIR / "uploads" / f"{file_id}.gpx"
+
+    # Check both .gpx and .igc extensions
+    gpx_path: Path | None = None
+    for ext in (".gpx", ".igc"):
+        p = cfg.OUTPUT_DIR / "uploads" / f"{file_id}{ext}"
+        if p.exists():
+            gpx_path = p
+            break
+    if gpx_path is None:
+        return {"status": "failed", "error": f"File {file_id!r} not found"}
+
     out_path = Path(out_dir) / f"{file_id}.glb"
 
     elev_cfg = ElevationConfig(

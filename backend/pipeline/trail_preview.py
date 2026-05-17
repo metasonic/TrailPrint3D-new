@@ -39,12 +39,13 @@ def build_trail_mesh(
     if len(track_points) < 2:
         return None
 
-    # Convert track points to world space
+    # Convert track points to world space.
+    # z uses the same scale_hor factor as x/y so all axes are mm-equivalent units.
     world_pts = np.array([
         [
             mercator_x(lon) * scale_hor,
             mercator_y(lat) * scale_hor,
-            elev / 1000.0 * scale_elevation,
+            elev / 1000.0 * scale_hor * scale_elevation,
         ]
         for lat, lon, elev in track_points
     ], dtype=np.float64)

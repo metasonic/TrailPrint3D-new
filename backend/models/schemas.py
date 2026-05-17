@@ -10,7 +10,7 @@ class GenerationSettings(BaseModel):
     obj_size_mm: int = Field(100, ge=5, le=10000)
     shape_rotation: int = Field(0, ge=-360, le=360)
     rectangle_height: int = Field(100, ge=5, le=10000)
-    ellipse_ratio: float = Field(0.75, gt=0)
+    ellipse_ratio: float = Field(0.75, gt=0.0, le=10.0)
 
     # Terrain
     elevation_scale: float = Field(1.0, ge=0)
@@ -27,15 +27,16 @@ class GenerationSettings(BaseModel):
 
     # Elevation API
     api: Literal["TERRAIN-TILES", "OPENTOPODATA", "OPEN-ELEVATION", "OPENTOPOGRAPHY"] = "TERRAIN-TILES"
-    dataset: str = "aster30m"
-    opentopography_dataset: str = "SRTMGL1"
+    # Dataset names: alphanumeric + hyphen/underscore, max 40 chars — prevents URL path injection
+    dataset: str = Field("aster30m", pattern=r"^[a-zA-Z0-9_\-]{1,40}$")
+    opentopography_dataset: str = Field("SRTMGL1", pattern=r"^[a-zA-Z0-9_\-]{1,40}$")
 
     # Scale mode
     scale_mode: Literal["FACTOR", "COORDINATES", "SCALE"] = "FACTOR"
-    scale_lat1: float = 0.0
-    scale_lon1: float = 0.0
-    scale_lat2: float = 0.0
-    scale_lon2: float = 0.0
+    scale_lat1: float = Field(0.0, ge=-90.0, le=90.0)
+    scale_lon1: float = Field(0.0, ge=-180.0, le=180.0)
+    scale_lat2: float = Field(0.0, ge=-90.0, le=90.0)
+    scale_lon2: float = Field(0.0, ge=-180.0, le=180.0)
 
     # OSM coloring layers
     water_ponds: bool = False
@@ -65,8 +66,8 @@ class GenerationSettings(BaseModel):
 
 class UploadResponse(BaseModel):
     file_id: str
-    filename: str
-    track_stats: TrackStats
+    filename: str = Field(max_length=255)
+    track_stats: "TrackStats"
 
 
 class TrackStats(BaseModel):

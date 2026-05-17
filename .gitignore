@@ -15,3 +15,7 @@ build.py
 # Other cache
 __pycache__/
 .claude
+
+# Environment secrets — never commit
+.env
+*.env.local

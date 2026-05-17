@@ -6,14 +6,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget xz-utils c
 
 ARG BLENDER_VERSION=4.5.0
 ARG BLENDER_ARCH=linux-x64
-# SHA256 of blender-4.5.0-linux-x64.tar.xz — update when upgrading Blender.
-# Verify: sha256sum blender-<version>-linux-x64.tar.xz
+# SHA256 of blender-4.5.0-linux-x64.tar.xz — supply via --build-arg BLENDER_SHA256=<hash>.
+# Obtain the hash from https://www.blender.org/download/release/Blender4.5/
+# and verify: sha256sum blender-4.5.0-linux-x64.tar.xz
 ARG BLENDER_SHA256=""
 
 RUN wget -q "https://download.blender.org/release/Blender${BLENDER_VERSION%.*}/blender-${BLENDER_VERSION}-${BLENDER_ARCH}.tar.xz" \
     -O /tmp/blender.tar.xz \
     && if [ -n "${BLENDER_SHA256}" ]; then \
          echo "${BLENDER_SHA256}  /tmp/blender.tar.xz" | sha256sum -c - || exit 1; \
+       else \
+         echo "WARNING: BLENDER_SHA256 not set — skipping integrity check. Set --build-arg BLENDER_SHA256=<hash> in production builds." >&2; \
        fi \
     && mkdir -p /opt/blender \
     && tar -xf /tmp/blender.tar.xz -C /opt/blender --strip-components=1 \
@@ -25,7 +28,7 @@ COPY TrailPrint3D /opt/blender/4.5/extensions/user_default/TrailPrint3D
 # ── Stage 2: Python runtime ─────────────────────────────────────────────────
 FROM python:3.12-slim
 
-# System deps for headless Blender (OpenGL stub, X11-xcb)
+# System deps for headless Blender (OpenGL stub, X11-xcb) + gosu for privilege drop
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1-mesa-glx \
     libglib2.0-0 \
@@ -35,6 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxfixes3 \
     libxrender1 \
     curl \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=blender-fetcher /opt/blender /opt/blender
@@ -51,11 +55,14 @@ COPY TrailPrint3D/ ./TrailPrint3D/
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED="1"
 
-# Run as non-root for security
+# Create non-root user for runtime (entrypoint handles volume ownership before dropping)
 RUN groupadd --gid 1001 appuser \
     && useradd --uid 1001 --gid appuser --no-create-home appuser \
     && chown -R appuser:appuser /app
-USER appuser
+
+COPY backend/docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
 EXPOSE 8000
+ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

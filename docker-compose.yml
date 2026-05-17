@@ -2,7 +2,8 @@ version: "3.9"
 
 # ── Shared env block for backend + worker ────────────────────────────────────
 x-backend-env: &backend-env
-  REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
+  # REDIS_PASSWORD must be set in .env — no default to avoid silent insecure deployments
+  REDIS_URL: redis://:${REDIS_PASSWORD:?Please set REDIS_PASSWORD in .env}@redis:6379/0
   OUTPUT_DIR: /app/data
   CACHE_DIR: /app/.cache
   BLENDER_EXECUTABLE_PATH: /opt/blender/blender
@@ -13,13 +14,15 @@ x-backend-env: &backend-env
   OPENTOPOGRAPHY_API_KEY: ""
   OVERPASS_URL: https://overpass-api.de/api/interpreter
   ADDON_SRC_DIR: /app/TrailPrint3D
-  FRONTEND_URL: ${PUBLIC_API_URL:-http://localhost:3000}
+  FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
   PYTHONPATH: /app
   PYTHONUNBUFFERED: "1"
 
 networks:
+  # frontend-net: browser traffic — frontend ↔ backend
   frontend-net:
     driver: bridge
+  # backend-net: internal only — backend ↔ worker ↔ redis
   backend-net:
     driver: bridge
 
@@ -51,7 +54,9 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     ports:
-      - "8000:8000"
+      # Bind to localhost only — traffic should reach the API through the frontend proxy
+      # or a reverse proxy. Avoids exposing the API directly to the public internet.
+      - "127.0.0.1:8000:8000"
     volumes:
       - data:/app/data
       - cache:/app/.cache
@@ -97,9 +102,9 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "celery", "-A", "backend.tasks.celery_app", "inspect", "ping", "--timeout", "5"]
+      test: ["CMD-SHELL", "celery -A backend.tasks.celery_app inspect ping --timeout 5 -d celery@$$HOSTNAME"]
       interval: 60s
-      timeout: 15s
+      timeout: 20s
       retries: 3
       start_period: 30s
     deploy:
@@ -113,12 +118,14 @@ services:
     image: redis:7-alpine
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-changeme}
+    # Password from REDIS_PASSWORD env var — no hardcoded default
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?Please set REDIS_PASSWORD in .env}
     networks:
       - backend-net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
+      # Use REDISCLI_AUTH env var to avoid exposing password in docker inspect healthcheck args
+      test: ["CMD-SHELL", "REDISCLI_AUTH=${REDIS_PASSWORD} redis-cli --no-auth-warning ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5

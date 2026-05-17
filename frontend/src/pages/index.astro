@@ -9,6 +9,7 @@ import TrailPrintApp from "../components/TrailPrintApp";
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TrailPrint3D — GPX to 3D Print</title>
   <meta name="description" content="Convert your GPS trail into a 3D-printable terrain map." />
+  <link rel="icon" href="/favicon.ico" sizes="any" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -28,6 +29,28 @@ import TrailPrintApp from "../components/TrailPrintApp";
     }
 
     html, body { height: 100%; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; font-size: 14px; }
+
+    /* ── Skip navigation link (visually hidden until focused) ── */
+    .skip-link {
+      position: absolute;
+      left: -9999px;
+      top: 0;
+      z-index: 9999;
+      padding: 0.5rem 1rem;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 700;
+      border-radius: 0 0 var(--radius) var(--radius);
+      text-decoration: none;
+    }
+    .skip-link:focus { left: 0; }
+
+    /* ── Keyboard focus indicator ── */
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: 3px;
+    }
 
     /* App grid */
     .app-grid {
@@ -230,6 +253,12 @@ import TrailPrintApp from "../components/TrailPrintApp";
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+    /* Respect user motion preference — disable looping animations */
+    @media (prefers-reduced-motion: reduce) {
+      .spinner { animation: none; border-top-color: #fff; opacity: 0.8; }
+      .progress-fill { transition: none; }
+    }
+
     /* Responsive */
     @media (max-width: 680px) {
       .app-grid { grid-template-columns: 1fr; grid-template-rows: auto 300px auto; }
@@ -240,6 +269,15 @@ import TrailPrintApp from "../components/TrailPrintApp";
   </style>
 </head>
 <body>
-  <TrailPrintApp client:load />
+  <!-- Skip navigation: allows keyboard users to jump past sidebar controls -->
+  <a href="#main-content" class="skip-link">Skip to 3D preview</a>
+
+  <!--
+    <main> is in the static HTML shell so landmark navigation is available
+    before and during React hydration (not just after client:load fires).
+  -->
+  <main id="main-content">
+    <TrailPrintApp client:load />
+  </main>
 </body>
 </html>
