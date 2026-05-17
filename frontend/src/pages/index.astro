@@ -1,0 +1,16 @@
+---
+import Layout from '../layouts/Layout.astro';
+import App from '../components/App';
+---
+
+<Layout title="TrailPrint3D Web">
+	<main class="h-screen w-full flex flex-col">
+		<header class="bg-blue-600 text-white p-4 shadow-md flex justify-between items-center">
+			<h1 class="text-xl font-bold">TrailPrint3D</h1>
+			<div class="text-sm">Self-Hosted Web Interface</div>
+		</header>
+		<div class="flex-grow overflow-hidden relative">
+			<App client:only="react" />
+		</div>
+	</main>
+</Layout>
