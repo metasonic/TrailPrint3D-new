@@ -12,4 +12,17 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    // Three.js is inherently large; 750 KB is expected for a 3D app
+    chunkSizeWarningLimit: 750,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          three: ['three'],
+          'react-three': ['@react-three/fiber', '@react-three/drei'],
+          vendor: ['react', 'react-dom'],
+        },
+      },
+    },
+  },
 })
