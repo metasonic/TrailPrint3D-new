@@ -50,6 +50,10 @@ class _HeadlessOverlay:
 
     _instance = None
 
+    # Mirrors the attribute accessed by runGeneration() at the end of the
+    # pipeline: `if overlay._start_time`.
+    _start_time: float | None = None
+
     @classmethod
     def get(cls):
         if cls._instance is None:
@@ -60,6 +64,7 @@ class _HeadlessOverlay:
     # Core lifecycle
 
     def start(self):
+        self._start_time = time.time()
         self._emit({'type': 'progress', 'percent': 0.0,
                     'phase': 'Starting', 'message': ''})
 

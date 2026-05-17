@@ -40,6 +40,7 @@ services:
     command: >
       bash -c "
         Xvfb :99 -screen 0 1280x720x24 &
+        until xdpyinfo -display :99 >/dev/null 2>&1; do sleep 0.1; done
         export DISPLAY=:99
         exec celery -A backend.app.celery_app worker
           --loglevel=info

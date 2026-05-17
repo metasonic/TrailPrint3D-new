@@ -47,7 +47,19 @@ def generate_model(
     """Run a single TrailPrint3D generation job via Blender headless."""
 
     r = _redis_client()
+    try:
+        _generate_model_inner(self, r, job_id, upload_id, params)
+    finally:
+        r.close()
 
+
+def _generate_model_inner(
+    self,
+    r: redis.Redis,
+    job_id: str,
+    upload_id: str,
+    params: Dict[str, Any],
+) -> None:
     # ------------------------------------------------------------------
     # Locate the uploaded GPX / IGC file.
     # ------------------------------------------------------------------
@@ -159,13 +171,18 @@ def generate_model(
 
     assert proc.stdout is not None  # guaranteed by stdout=PIPE
 
+    # Collect recent non-JSON lines to surface Blender crash details to the user.
+    _plain_tail: list[str] = []
+    _cancel_check_counter = 0
+
     for raw_line in proc.stdout:
         line = raw_line.rstrip()
         if not line:
             continue
 
-        # Check for cancellation request.
-        if r.exists(f"job:{job_id}:cancel"):
+        # Check for cancellation request every 5 lines to limit Redis round-trips.
+        _cancel_check_counter += 1
+        if _cancel_check_counter % 5 == 0 and r.exists(f"job:{job_id}:cancel"):
             logger.info("Cancellation requested for job %s — terminating Blender.", job_id)
             proc.terminate()
             try:
@@ -189,6 +206,9 @@ def generate_model(
                 data = json.loads(line)
             except json.JSONDecodeError:
                 logger.debug("Blender non-JSON line: %s", line)
+                _plain_tail.append(line)
+                if len(_plain_tail) > 30:
+                    _plain_tail.pop(0)
                 continue
 
             percent = data.get("percent")
@@ -216,6 +236,9 @@ def generate_model(
                 _publish_progress(r, job_id, progress_payload)
         else:
             logger.debug("Blender stdout: %s", line)
+            _plain_tail.append(line)
+            if len(_plain_tail) > 30:
+                _plain_tail.pop(0)
 
     exit_code = proc.wait()
 
@@ -257,6 +280,9 @@ def generate_model(
         logger.info("Job %s completed successfully with files: %s", job_id, output_files)
     else:
         error_msg = f"Blender exited with code {exit_code}."
+        if _plain_tail:
+            detail = " | ".join(_plain_tail[-5:])
+            error_msg = f"{error_msg} Last output: {detail}"
         logger.error("Job %s failed: %s", job_id, error_msg)
         state.update(
             {

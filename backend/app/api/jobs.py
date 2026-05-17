@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from pathlib import Path
@@ -102,12 +103,16 @@ async def cancel_job(job_id: str) -> None:
     """
     r = _redis()
     try:
-        exists = await r.exists(f"job:{job_id}")
-        if not exists:
+        raw = await r.get(f"job:{job_id}")
+        if raw is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Job '{job_id}' not found.",
             )
+        job_status = json.loads(raw).get("status")
+        if job_status in ("done", "failed"):
+            # Job already in terminal state — nothing to cancel.
+            return
         ttl_seconds = settings.JOB_TTL_HOURS * 3600
         await r.set(f"job:{job_id}:cancel", "1", ex=ttl_seconds)
     finally:

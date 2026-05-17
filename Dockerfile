@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxi6 libxxf86vm1 libxfixes3 libxrender1 \
         libgl1-mesa-glx libgles2-mesa libegl1-mesa \
         libglib2.0-0 libsm6 libxext6 \
-        xvfb \
+        xvfb x11-utils \
         python3.11 python3-pip \
         curl \
         fonts-liberation \
