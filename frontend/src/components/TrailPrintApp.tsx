@@ -9,6 +9,7 @@ import {
   generatePreview,
   startExport,
   getJobStatus,
+  PollError,
   downloadUrl,
   resolvePreviewUrl,
   type GenerationSettings,
@@ -183,12 +184,20 @@ export default function TrailPrintApp() {
           setJobStatus(status);
           if (status.status === "done" || status.status === "failed") clearPoll();
         } catch (e: unknown) {
-          // Malformed/unexpected response → surface as failure
           if (e instanceof SyntaxError) {
             clearPoll();
             setJobStatus((s) => s ? { ...s, status: "failed", error: "Invalid server response" } : null);
+          } else if (e instanceof PollError) {
+            if (e.status === 404) {
+              clearPoll();
+              setJobStatus((s) => s ? { ...s, status: "failed", error: "Export job expired — please re-export" } : null);
+            } else if (e.status === 503) {
+              setJobStatus((s) => s && s.status !== "done" && s.status !== "failed"
+                ? { ...s, message: "Server busy, retrying…" } : s);
+            }
+            // Other HTTP errors: keep polling silently (transient network issue)
           }
-          // Network hiccup — keep polling silently
+          // Non-PollError network hiccups: keep polling silently
         }
       }, 2000);
     } catch (e: unknown) {
@@ -227,6 +236,14 @@ export default function TrailPrintApp() {
     <div className="app-grid">
       {/* ── Left panel ── */}
       <aside className="sidebar">
+        <header className="app-header">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <path d="M3 17l4-8 4 4 3-6 4 8" />
+            <rect x="2" y="19" width="20" height="2" rx="1" fill="currentColor" stroke="none" />
+          </svg>
+          <h1>TrailPrint3D</h1>
+          <span>GPX → 3D Print</span>
+        </header>
         {/* Upload zone */}
         <section
           className={`upload-zone${isDragging ? " dragging" : ""}${fileId ? " has-file" : ""}`}
@@ -283,6 +300,17 @@ export default function TrailPrintApp() {
         {/* Settings */}
         {fileId && (
           <>
+            <label style={{ marginTop: "0.25rem" }}>
+              <span>Trail Name</span>
+              <input
+                type="text"
+                maxLength={100}
+                placeholder="e.g. Mont Blanc Tour"
+                value={settings.trail_name ?? ""}
+                onChange={(e) => updateSetting("trail_name", e.target.value)}
+              />
+            </label>
+
             <details open className="settings-group">
               <summary>Shape &amp; Size</summary>
               <label>Shape
@@ -318,7 +346,10 @@ export default function TrailPrintApp() {
               <label>Resolution (1–8)
                 <input type="range" min={1} max={8} value={settings.num_subdivisions}
                   onChange={(e) => updateSetting("num_subdivisions", +e.target.value)} />
-                <span>{settings.num_subdivisions}</span>
+                <span>
+                  {settings.num_subdivisions}
+                  {(settings.num_subdivisions ?? 4) > 4 ? " — full detail in export only" : ""}
+                </span>
               </label>
               <label>Min Thickness (mm)
                 <input type="number" min={0.5} max={50} step={0.5} value={settings.min_thickness}
@@ -389,20 +420,28 @@ export default function TrailPrintApp() {
       {/* ── Download panel ── */}
       {fileId && (
         <footer className="download-panel">
-          <div className="export-buttons" role="group" aria-label="Export format">
-            <span>Export as:</span>
+          <div className="export-buttons" role="group" aria-label="Export format and trigger">
+            <span>Format:</span>
             {(["STL", "OBJ", "3MF"] as const).map((fmt) => (
               <button
                 key={fmt}
                 type="button"
                 className={`btn-export${exportFormat === fmt ? " active" : ""}`}
-                onClick={() => { setExportFormat(fmt); handleExport(fmt); }}
-                disabled={jobStatus?.status === "running" || jobStatus?.status === "pending"}
+                onClick={() => setExportFormat(fmt)}
                 aria-pressed={exportFormat === fmt}
               >
                 {fmt}
               </button>
             ))}
+            <button
+              type="button"
+              className="btn-primary"
+              style={{ width: "auto", padding: "0.45rem 1rem", marginLeft: "0.25rem" }}
+              onClick={() => handleExport(exportFormat)}
+              disabled={jobStatus?.status === "running" || jobStatus?.status === "pending"}
+            >
+              Generate {exportFormat}
+            </button>
           </div>
 
           {jobStatus && (

@@ -143,11 +143,17 @@ def _paeth_predictor(a: int, b: int, c: int) -> int:
 
 
 def _parse_png_rgb(png_bytes: bytes) -> list[list[tuple[int, int, int]]]:
-    """Decode an 8-bit RGB PNG without external libraries."""
+    """Decode an 8-bit RGB or RGBA PNG without external libraries.
+
+    Accepts color_type 2 (RGB) and color_type 6 (RGBA — alpha is discarded).
+    Some CDN-cached terrain tiles are served as RGBA; rejecting them would
+    silently produce zero-elevation grids.
+    """
     if png_bytes[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValueError("Not a valid PNG file (bad magic bytes)")
     offset = 8
-    width = height = None
+    width = height = 0
+    color_type = 2
     idat = b""
     while offset < len(png_bytes):
         length = struct.unpack(">I", png_bytes[offset : offset + 4])[0]
@@ -156,14 +162,19 @@ def _parse_png_rgb(png_bytes: bytes) -> list[list[tuple[int, int, int]]]:
         offset += 12 + length
         if chunk == b"IHDR":
             width, height, bit_depth, color_type = struct.unpack(">IIBB", data[:10])
-            if bit_depth != 8 or color_type != 2:
-                raise ValueError(f"Unsupported PNG format: bit_depth={bit_depth}, color_type={color_type} (expected 8-bit RGB)")
+            if bit_depth != 8 or color_type not in (2, 6):
+                raise ValueError(
+                    f"Unsupported PNG format: bit_depth={bit_depth}, color_type={color_type}"
+                    " (expected 8-bit RGB or RGBA)"
+                )
         elif chunk == b"IDAT":
             idat += data
         elif chunk == b"IEND":
             break
     raw = zlib.decompress(idat)
-    stride = 3 * width
+    # RGB = 3 bytes/pixel, RGBA = 4 bytes/pixel
+    n_ch = 3 if color_type == 2 else 4
+    stride = n_ch * width
     result = []
     prev = bytearray(stride)
     for row_idx in range(height):
@@ -175,23 +186,24 @@ def _parse_png_rgb(png_bytes: bytes) -> list[list[tuple[int, int, int]]]:
             recon[:] = scan
         elif ftype == 1:
             for j in range(stride):
-                recon[j] = (scan[j] + (recon[j - 3] if j >= 3 else 0)) & 0xFF
+                recon[j] = (scan[j] + (recon[j - n_ch] if j >= n_ch else 0)) & 0xFF
         elif ftype == 2:
             for j in range(stride):
                 recon[j] = (scan[j] + prev[j]) & 0xFF
         elif ftype == 3:
             for j in range(stride):
-                left = recon[j - 3] if j >= 3 else 0
+                left = recon[j - n_ch] if j >= n_ch else 0
                 recon[j] = (scan[j] + (left + prev[j]) // 2) & 0xFF
         elif ftype == 4:
             for j in range(stride):
-                a = recon[j - 3] if j >= 3 else 0
+                a = recon[j - n_ch] if j >= n_ch else 0
                 b_val = prev[j]
-                c = prev[j - 3] if j >= 3 else 0
+                c = prev[j - n_ch] if j >= n_ch else 0
                 recon[j] = (scan[j] + _paeth_predictor(a, b_val, c)) & 0xFF
         else:
             raise ValueError(f"Unknown PNG filter type {ftype} in row {row_idx}")
-        result.append([(recon[j], recon[j + 1], recon[j + 2]) for j in range(0, stride, 3)])
+        # Extract only R,G,B — skip alpha if present
+        result.append([(recon[j], recon[j + 1], recon[j + 2]) for j in range(0, stride, n_ch)])
         prev = recon
     return result
 

@@ -144,6 +144,9 @@ export async function startExport(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ file_id: fileId, settings, format }),
     signal,
+    // 60 s: generous enough for a loaded queue to accept the task;
+    // the actual generation runs in Celery and is polled separately.
+    timeoutMs: 60_000,
   });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -152,12 +155,19 @@ export async function startExport(
   return res.json();
 }
 
+export class PollError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = "PollError";
+  }
+}
+
 export async function getJobStatus(jobId: string, signal?: AbortSignal): Promise<JobStatus> {
   const res = await fetchWithTimeout(`${API_BASE}/api/job/${jobId}`, {
     signal,
     timeoutMs: POLL_TIMEOUT_MS,
   });
-  if (!res.ok) throw new Error(parseError(res, "Could not fetch job status"));
+  if (!res.ok) throw new PollError(res.status, parseError(res, "Could not fetch job status"));
   return res.json();
 }
 

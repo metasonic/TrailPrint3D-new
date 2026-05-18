@@ -28,7 +28,7 @@ import TrailPrintApp from "../components/TrailPrintApp";
       --radius: 10px;
     }
 
-    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; font-size: 14px; }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; font-size: 15px; }
 
     /* ── Skip navigation link (visually hidden until focused) ── */
     .skip-link {
@@ -57,7 +57,7 @@ import TrailPrintApp from "../components/TrailPrintApp";
       display: grid;
       grid-template-columns: 300px 1fr;
       grid-template-rows: 1fr auto;
-      height: 100vh;
+      height: 100dvh; /* 100dvh: excludes mobile browser chrome (iOS safe area fix) */
       gap: 0;
     }
     .sidebar {
@@ -148,10 +148,10 @@ import TrailPrintApp from "../components/TrailPrintApp";
       display: flex;
       flex-direction: column;
       gap: 0.25rem;
-      font-size: 0.8rem;
+      font-size: 0.867rem; /* ~13px at 15px base — keeps labels above 12px floor */
       color: var(--muted);
     }
-    label > span { color: var(--text); font-size: 0.85rem; }
+    label > span { color: var(--text); font-size: 0.867rem; }
     input[type="number"], select {
       background: var(--bg);
       border: 1px solid var(--border);
@@ -210,7 +210,7 @@ import TrailPrintApp from "../components/TrailPrintApp";
       font-weight: 600;
       transition: border-color 0.15s, background 0.15s;
     }
-    .btn-export.active, .btn-export:hover { border-color: var(--accent); background: rgba(79,142,247,0.1); }
+    .btn-export.active, .btn-export:hover { border-color: var(--accent); background: rgba(37,99,235,0.12); /* #2563eb @ 12% */ }
     .btn-export:disabled { opacity: 0.5; cursor: not-allowed; }
     .btn-download {
       display: inline-block;
@@ -222,6 +222,12 @@ import TrailPrintApp from "../components/TrailPrintApp";
       text-decoration: none;
       font-size: 0.85rem;
       font-weight: 600;
+      transition: filter 0.15s;
+    }
+    .btn-download:hover { filter: brightness(1.2); }
+    .btn-download:focus-visible {
+      outline: 2px solid #4ade80;
+      outline-offset: 3px;
     }
 
     /* Job status */
@@ -261,10 +267,21 @@ import TrailPrintApp from "../components/TrailPrintApp";
 
     /* Responsive */
     @media (max-width: 680px) {
-      .app-grid { grid-template-columns: 1fr; grid-template-rows: auto 300px auto; }
+      .app-grid {
+        grid-template-columns: 1fr;
+        /* Use viewport-relative height so the preview is usable on portrait phones */
+        grid-template-rows: auto min(50vw, 360px) auto;
+      }
       .sidebar { grid-row: 1; height: auto; overflow-y: visible; }
       .preview-area { grid-row: 2; }
-      .download-panel { grid-row: 3; }
+      .download-panel {
+        grid-row: 3;
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .export-buttons { flex-wrap: wrap; }
+      .btn-export { flex: 1; text-align: center; }
+      .progress-bar { width: 100%; }
     }
   </style>
 </head>

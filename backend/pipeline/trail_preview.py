@@ -87,10 +87,14 @@ def _build_tube(
     radius: float,
     sections: int = 6,
 ) -> trimesh.Trimesh:
-    """Create a tube mesh along a polyline path."""
+    """Create a tube mesh along a polyline path.
+
+    One ring is generated per path point and shared between adjacent segments,
+    producing a fully connected (manifold) tube with no open seams at waypoints.
+    """
     n = len(path)
-    verts = []
-    faces = []
+    verts: list = []
+    faces: list = []
 
     angles = np.linspace(0, 2 * math.pi, sections, endpoint=False)
     circle = np.column_stack([np.cos(angles), np.sin(angles)])
@@ -103,7 +107,6 @@ def _build_tube(
             tang = np.array([0.0, 0.0, 1.0])
         else:
             tang = tang / tang_norm
-        # Choose an up vector not parallel to tang
         up = np.array([0.0, 0.0, 1.0])
         if abs(np.dot(tang, up)) > 0.99:
             up = np.array([0.0, 1.0, 0.0])
@@ -112,29 +115,27 @@ def _build_tube(
         up = np.cross(right, tang)
         return right, up
 
-    ring_start = 0
-    for i in range(n - 1):
-        p0, p1 = path[i], path[i + 1]
-        right, up = _frame(p0, p1)
-
-        ring = p0 + radius * (circle[:, 0:1] * right + circle[:, 1:2] * up)
-        ring_next = p1 + radius * (circle[:, 0:1] * right + circle[:, 1:2] * up)
-
-        base = ring_start
+    # One ring per path point — shared between adjacent segments.
+    # Interior points use the forward segment direction; the last point uses the
+    # previous-segment direction so the frame is continuous at the tip.
+    for i in range(n):
+        if i < n - 1:
+            right, up = _frame(path[i], path[i + 1])
+        else:
+            right, up = _frame(path[i - 1], path[i])
+        ring = path[i] + radius * (circle[:, 0:1] * right + circle[:, 1:2] * up)
         verts.extend(ring.tolist())
-        verts.extend(ring_next.tolist())
 
+    # Connect adjacent rings with quads (two triangles each)
+    for i in range(n - 1):
+        base = i * sections
+        next_base = (i + 1) * sections
         for j in range(sections):
             j2 = (j + 1) % sections
-            a, b = base + j, base + j2
-            c, d = base + sections + j, base + sections + j2
-            faces.append([a, b, d])
-            faces.append([a, d, c])
+            faces.append([base + j, base + j2, next_base + j2])
+            faces.append([base + j, next_base + j2, next_base + j])
 
-        ring_start += sections * 2
-
-    # Caps
-    # Start cap
+    # Start cap (inward-facing — CW when viewed from outside)
     center_s = len(verts)
     verts.append(path[0].tolist())
     for j in range(sections):
@@ -143,18 +144,17 @@ def _build_tube(
 
     # End cap
     center_e = len(verts)
-    last_ring_base = ring_start - sections
+    last_ring_base = (n - 1) * sections
     verts.append(path[-1].tolist())
     for j in range(sections):
         j2 = (j + 1) % sections
         faces.append([center_e, last_ring_base + j, last_ring_base + j2])
 
-    mesh = trimesh.Trimesh(
+    return trimesh.Trimesh(
         vertices=np.array(verts, dtype=np.float64),
         faces=np.array(faces),
         process=False,
     )
-    return mesh
 
 
 def compute_scale_hor(

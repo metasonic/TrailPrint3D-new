@@ -36,6 +36,8 @@ class TerrainConfig:
     shape_rotation: float = 0.0     # degrees
     rectangle_height: float = 100.0
     ellipse_ratio: float = 0.75
+    # When True, normalise elevation so the relief range spans 10 mm (matches addon autoScale)
+    fixed_elevation_scale: bool = False
 
 
 def _grid_size(num_subdivisions: int) -> int:
@@ -79,16 +81,24 @@ def build_terrain_mesh(
         span = 1.0
     scale_hor = config.obj_size_mm / span
 
+    # Vertical scale: match addon's autoScale formula.
+    # Normal mode: autoScale = scale_hor (elevation in same unit-space as x/y).
+    # Fixed mode:  autoScale = 10 / (relief_km), so the elevation range is 10 mm.
+    if config.fixed_elevation_scale:
+        elev_diff = float(elev_grid.max() - elev_grid.min())
+        auto_scale = (10.0 / (elev_diff / 1000.0)) if elev_diff > 0 else scale_hor
+    else:
+        auto_scale = scale_hor
+
     # Build vertices — x,y,z all in mm-equivalent world units so min_thickness
     # (also in mm) can be subtracted directly in _add_floor.
-    # z: elevation_m → km (*1/1000) → mm-equivalent (*scale_hor).
     verts = np.zeros((n * n, 3), dtype=np.float64)
     for i in range(n):
         for j in range(n):
             idx = i * n + j
             verts[idx, 0] = xs[j] * scale_hor
             verts[idx, 1] = ys[i] * scale_hor
-            verts[idx, 2] = elev_grid[i, j] / 1000.0 * scale_hor * config.elevation_scale
+            verts[idx, 2] = elev_grid[i, j] / 1000.0 * auto_scale * config.elevation_scale
 
     # Build faces (two triangles per quad)
     faces = []
@@ -233,8 +243,11 @@ def _add_floor(mesh: trimesh.Trimesh, min_thickness: float) -> trimesh.Trimesh:
     for edge_idx in boundary_indices:
         v0, v1 = all_edges[edge_idx]
         b0, b1 = v0 + n_top, v1 + n_top
-        side_faces.append([v0, v1, b1])
-        side_faces.append([v0, b1, b0])
+        # Winding order: outward-facing normals require v1→v0 on side quads.
+        # Top surface uses CCW convention viewed from above; boundary edges are
+        # directed CCW, so reversing to v1,v0 on the side makes normals point out.
+        side_faces.append([v1, v0, b0])
+        side_faces.append([v1, b0, b1])
 
     all_faces = np.vstack([top_faces, bot_faces] + ([np.array(side_faces)] if side_faces else []))
     solid = trimesh.Trimesh(vertices=all_verts, faces=all_faces, process=False)

@@ -137,34 +137,27 @@ def main():
     # -----------------------------------------------------------------------
     # Inject tp3d into bpy.context.scene.
     #
-    # In a registered Blender addon, scene.tp3d is a bpy.props.PointerProperty
-    # and cannot be freely reassigned with `= mock_dict`. Two strategies:
-    #
-    # 1. Enable the addon via bpy.ops.preferences.addon_enable() so that the
-    #    PropertyGroup is registered, then set individual property values.
-    # 2. Fall back to setting each property value after addon registration.
-    #
-    # We store tp3d in the custom property bag (scene["tp3d"]) as a universal
-    # fallback that works regardless of the registration state.
+    # scene.tp3d is a bpy.props.PointerProperty registered by the addon.
+    # We must enable the addon first so the PropertyGroup is registered,
+    # then copy our settings values onto the live PropertyGroup instance.
+    # There is no usable fallback: without the PropertyGroup, every read of
+    # scene.tp3d inside the addon raises AttributeError and generation fails.
     # -----------------------------------------------------------------------
     sys.path.insert(0, addon_src_dir)
 
-    bpy.context.scene["tp3d"] = tp3d
-
-    # Attempt to enable the addon so its PropertyGroup is registered,
-    # then copy our values onto the live PropertyGroup instance.
     try:
         result = bpy.ops.preferences.addon_enable(module="TrailPrint3D")
-        if "FINISHED" in result:
-            pg = bpy.context.scene.tp3d
-            for key, value in tp3d.items():
-                try:
-                    setattr(pg, key, value)
-                except (AttributeError, TypeError):
-                    pass  # read-only RNA props or type mismatch — skip
+        if "FINISHED" not in result:
+            raise RuntimeError(f"addon_enable returned {result!r}")
+        pg = bpy.context.scene.tp3d
+        for key, value in tp3d.items():
+            try:
+                setattr(pg, key, value)
+            except (AttributeError, TypeError):
+                pass  # read-only RNA props or type mismatch — skip
     except Exception as exc:
-        print(f"WARNING: Could not enable addon via bpy.ops ({exc}). "
-              "Relying on custom property bag fallback.", flush=True)
+        print(f"STATUS: FAILED — Addon registration failed: {exc}", flush=True)
+        sys.exit(1)
 
     # -----------------------------------------------------------------------
     # Patch addon_preferences.get_prefs to return mock
