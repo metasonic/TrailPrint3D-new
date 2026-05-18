@@ -54,6 +54,7 @@ export default function TrailPrintApp() {
   const [trackStats, setTrackStats] = useState<TrackStats | null>(null);
   const [settings, setSettings] = useState<GenerationSettings>(DEFAULT_SETTINGS);
   const [glbUrl, setGlbUrl] = useState<string | null>(null);
+  const [uploadLoading, setUploadLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -113,10 +114,12 @@ export default function TrailPrintApp() {
     setPreviewError(null);
     setGlbUrl(null);
     setJobStatus(null);
+    setFileId(null);
     // Reset loading immediately — if a previous request was aborted its finally
     // block won't fire setPreviewLoading(false), so we must reset it here.
     setPreviewLoading(false);
     previewAbortRef.current?.abort();
+    setUploadLoading(true);
     try {
       const res = await uploadFile(file);
       setFileId(res.file_id);
@@ -125,6 +128,8 @@ export default function TrailPrintApp() {
       await handlePreview(res.file_id, settings);
     } catch (e: unknown) {
       setUploadError(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setUploadLoading(false);
     }
   }, [settings, handlePreview]);
 
@@ -209,7 +214,13 @@ export default function TrailPrintApp() {
     e.preventDefault();
     setIsDragging(false);
     const f = e.dataTransfer.files[0];
-    if (f) handleFile(f);
+    if (!f) return;
+    const ext = f.name.split(".").pop()?.toLowerCase();
+    if (ext !== "gpx" && ext !== "igc") {
+      setUploadError("Only .gpx and .igc files are accepted");
+      return;
+    }
+    handleFile(f);
   };
 
   return (
@@ -220,7 +231,7 @@ export default function TrailPrintApp() {
         <section
           className={`upload-zone${isDragging ? " dragging" : ""}${fileId ? " has-file" : ""}`}
           onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-          onDragLeave={() => setIsDragging(false)}
+          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragging(false); }}
           onDrop={onDrop}
           onClick={() => fileInputRef.current?.click()}
           role="button"
@@ -246,7 +257,12 @@ export default function TrailPrintApp() {
             <polyline points="17 8 12 3 7 8"/>
             <line x1="12" y1="3" x2="12" y2="15"/>
           </svg>
-          {fileId && trackStats ? (
+          {uploadLoading ? (
+            <>
+              <span className="spinner" aria-hidden="true" />
+              <p>Uploading…</p>
+            </>
+          ) : fileId && trackStats ? (
             <div className="upload-stats">
               <strong>✓ Track loaded</strong>
               <span>{trackStats.length_km.toFixed(1)} km · +{trackStats.elevation_gain_m.toFixed(0)} m</span>
@@ -351,7 +367,7 @@ export default function TrailPrintApp() {
                 onChange={(e) => updateSetting("roads_med", e.target.checked)} /> Secondary Roads</label>
             </details>
 
-            <button className="btn-primary" onClick={handleRegenerate} disabled={previewLoading}>
+            <button type="button" className="btn-primary" onClick={handleRegenerate} disabled={previewLoading}>
               {previewLoading ? "Generating…" : "↻ Regenerate Preview"}
             </button>
             {previewError && (
@@ -378,6 +394,7 @@ export default function TrailPrintApp() {
             {(["STL", "OBJ", "3MF"] as const).map((fmt) => (
               <button
                 key={fmt}
+                type="button"
                 className={`btn-export${exportFormat === fmt ? " active" : ""}`}
                 onClick={() => { setExportFormat(fmt); handleExport(fmt); }}
                 disabled={jobStatus?.status === "running" || jobStatus?.status === "pending"}

@@ -49,7 +49,7 @@ async def start_export(body: ExportRequest):
             gpx_path = p
             break
     if gpx_path is None:
-        raise HTTPException(status_code=404, detail=f"File {body.file_id!r} not found")
+        raise HTTPException(status_code=404, detail="File not found")
 
     job_id = str(uuid.uuid4())
 
@@ -66,10 +66,18 @@ async def start_export(body: ExportRequest):
 
     from ..tasks.export_task import export_model
 
-    export_model.apply_async(
-        args=[job_id, body.file_id, body.settings.model_dump(), body.format],
-        task_id=job_id,
-    )
+    try:
+        export_model.apply_async(
+            args=[job_id, body.file_id, body.settings.model_dump(), body.format],
+            task_id=job_id,
+        )
+    except Exception:
+        logger.exception("Failed to enqueue export task for job %s", job_id)
+        try:
+            _get_redis().delete(f"job:{job_id}")
+        except Exception:
+            pass
+        raise HTTPException(status_code=503, detail="Queue temporarily unavailable")
 
     return ExportResponse(job_id=job_id)
 
@@ -85,7 +93,7 @@ async def get_job_status(job_id: str):
         raise HTTPException(status_code=503, detail="Queue temporarily unavailable")
 
     if not data:
-        raise HTTPException(status_code=404, detail=f"Job {job_id!r} not found")
+        raise HTTPException(status_code=404, detail="Job not found")
 
     def _s(v) -> str:
         return v.decode() if isinstance(v, bytes) else str(v)

@@ -222,13 +222,16 @@ def _add_floor(mesh: trimesh.Trimesh, min_thickness: float) -> trimesh.Trimesh:
     bot_faces = mesh.faces.copy() + n_top
     bot_faces = bot_faces[:, ::-1]
 
-    # Side faces along boundary edges
-    boundary_edges = trimesh.grouping.group_rows(
-        np.sort(mesh.edges_unique, axis=1), require_count=1
-    )
+    # Side faces along boundary edges.
+    # mesh.edges (not mesh.edges_unique) must be used here:
+    # interior edges appear twice in mesh.edges, boundary edges appear once.
+    # group_rows with require_count=1 finds the boundary-only edges.
+    all_edges = mesh.edges
+    all_edges_sorted = np.sort(all_edges, axis=1)
+    boundary_indices = trimesh.grouping.group_rows(all_edges_sorted, require_count=1)
     side_faces = []
-    for edge_idx in boundary_edges:
-        v0, v1 = mesh.edges_unique[edge_idx]
+    for edge_idx in boundary_indices:
+        v0, v1 = all_edges[edge_idx]
         b0, b1 = v0 + n_top, v1 + n_top
         side_faces.append([v0, v1, b1])
         side_faces.append([v0, b1, b0])

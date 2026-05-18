@@ -95,6 +95,13 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
       cancelAnimationFrame(animId);
       ro.disconnect();
       controls.dispose();
+      // Dispose any currently loaded model
+      if (modelGroupRef.current) {
+        modelGroupRef.current.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) disposeMesh(child as THREE.Mesh);
+        });
+        modelGroupRef.current = null;
+      }
       // Dispose grid helper resources
       if (gridRef.current) {
         (gridRef.current.geometry as THREE.BufferGeometry).dispose();

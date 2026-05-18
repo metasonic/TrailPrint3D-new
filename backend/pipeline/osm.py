@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass, field
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -192,7 +195,7 @@ def fetch_osm_data(
             return data
         except Exception as exc:
             wait = 2 ** attempt
-            print(f"OSM fetch attempt {attempt + 1} failed ({exc}); retrying in {wait}s")
+            logger.warning("OSM fetch attempt %d failed; retrying in %ds", attempt + 1, wait)
             time.sleep(wait)
 
     return None

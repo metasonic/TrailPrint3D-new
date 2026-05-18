@@ -13,6 +13,7 @@ import threading
 from pathlib import Path
 
 import redis as _redis
+from celery.exceptions import SoftTimeLimitExceeded
 
 from .celery_app import app
 
@@ -127,9 +128,6 @@ def export_model(
         # API key is NOT stored in this file — it is passed as an environment variable
     }
 
-    config_file = job_dir / "config.json"
-    config_file.write_text(json.dumps(config_payload, indent=2))
-
     headless_script = Path(__file__).parent.parent / "blender" / "headless_generate.py"
     blender_exe = str(cfg.BLENDER_EXECUTABLE_PATH)
 
@@ -137,6 +135,8 @@ def export_model(
         _update_job(r, job_id, status="failed", error="Blender not found at configured path")
         logger.error("Blender not found at %s", blender_exe)
         return {"status": "failed"}
+
+    config_file = job_dir / "config.json"
 
     cmd = [
         blender_exe,
@@ -152,7 +152,9 @@ def export_model(
 
     _update_job(r, job_id, status="running", progress=0, message="Starting Blender...")
 
+    proc: subprocess.Popen | None = None
     try:
+        config_file.write_text(json.dumps(config_payload, indent=2))
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -220,6 +222,15 @@ def export_model(
         file_names = [f.name for f in output_files]
         _update_job(r, job_id, status="done", progress=100, files=json.dumps(file_names))
         return {"status": "done", "files": file_names}
+
+    except SoftTimeLimitExceeded:
+        if proc is not None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        _update_job(r, job_id, status="failed", error="Generation timed out")
+        raise
 
     except Exception:
         logger.exception("Export task failed for job %s", job_id)

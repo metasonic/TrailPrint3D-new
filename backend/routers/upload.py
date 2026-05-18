@@ -66,6 +66,8 @@ async def upload_gpx(file: UploadFile = File(...)):
 
         segments = read_track_file(dest)
         raw_stats = compute_track_stats(segments)
+        if raw_stats.point_count == 0:
+            raise HTTPException(status_code=422, detail="Track file contains no valid track points")
         stats = TrackStats(
             point_count=raw_stats.point_count,
             length_km=raw_stats.length_km,
@@ -76,6 +78,9 @@ async def upload_gpx(file: UploadFile = File(...)):
             max_lon=raw_stats.max_lon,
             date=raw_stats.date,
         )
+    except HTTPException:
+        dest.unlink(missing_ok=True)
+        raise
     except Exception as exc:
         dest.unlink(missing_ok=True)
         logger.exception("Failed to parse uploaded track file %s", file_id)

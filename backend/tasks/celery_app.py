@@ -22,4 +22,7 @@ app.conf.update(
     task_time_limit=660,
 )
 
-app.autodiscover_tasks(["backend.tasks"])
+# Explicitly import task modules so they are registered in both API and worker processes.
+# autodiscover_tasks(["backend.tasks"]) looks for backend/tasks/tasks.py (doesn't exist)
+# and silently skips; explicit imports are the reliable alternative.
+from backend.tasks import export_task, preview_task  # noqa: F401, E402

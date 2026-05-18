@@ -4,10 +4,9 @@ All bpy dependencies removed; returns plain Python data structures.
 """
 from __future__ import annotations
 
-import os
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date as _date, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -25,7 +24,7 @@ class TrackStats:
     max_lat: float
     min_lon: float
     max_lon: float
-    date: str = ""
+    date: Optional[str] = None
 
 
 def _parse_points(points: list, point_type: str) -> Segment:
@@ -93,38 +92,58 @@ def read_gpx(filepath: str | Path) -> list[Segment]:
 def read_igc(filepath: str | Path) -> list[Segment]:
     """Parse an IGC flight log file."""
     coordinates: Segment = []
+    flight_date: Optional[_date] = None
+
     with open(str(filepath), "r") as f:
-        for line in f:
-            if not line.startswith("B"):
-                continue
+        lines = f.readlines()
+
+    # Parse HFDTE header to get the actual flight date (DDMMYY format)
+    for line in lines:
+        line = line.strip()
+        if line.startswith("HFDTE"):
             try:
-                time_str = line[1:7]
-                hours = int(time_str[0:2])
-                minutes = int(time_str[2:4])
-                seconds = int(time_str[4:6])
-
-                lat_str = line[7:15]
-                lat_deg = int(lat_str[0:2])
-                lat_min = int(lat_str[2:4])
-                lat_min_frac = int(lat_str[4:7]) / 1000.0
-                lat = lat_deg + (lat_min + lat_min_frac) / 60.0
-                if lat_str[7] == "S":
-                    lat = -lat
-
-                lon_str = line[15:24]
-                lon_deg = int(lon_str[0:3])
-                lon_min = int(lon_str[3:5])
-                lon_min_frac = int(lon_str[5:8]) / 1000.0
-                lon = lon_deg + (lon_min + lon_min_frac) / 60.0
-                if lon_str[8] == "W":
-                    lon = -lon
-
-                gps_alt = int(line[30:35])
-                now = datetime.now()
-                timestamp = datetime(now.year, now.month, now.day, hours, minutes, seconds)
-                coordinates.append((lat, lon, float(gps_alt), timestamp))
+                d = line[5:11]  # DDMMYY
+                flight_date = _date(
+                    2000 + int(d[4:6]), int(d[2:4]), int(d[0:2])
+                )
             except (ValueError, IndexError):
-                continue
+                pass
+            break
+
+    today = datetime.now().date()
+    base_date = flight_date or today
+
+    for line in lines:
+        if not line.startswith("B"):
+            continue
+        try:
+            time_str = line[1:7]
+            hours = int(time_str[0:2])
+            minutes = int(time_str[2:4])
+            seconds = int(time_str[4:6])
+
+            lat_str = line[7:15]
+            lat_deg = int(lat_str[0:2])
+            lat_min = int(lat_str[2:4])
+            lat_min_frac = int(lat_str[4:7]) / 1000.0
+            lat = lat_deg + (lat_min + lat_min_frac) / 60.0
+            if lat_str[7] == "S":
+                lat = -lat
+
+            lon_str = line[15:24]
+            lon_deg = int(lon_str[0:3])
+            lon_min = int(lon_str[3:5])
+            lon_min_frac = int(lon_str[5:8]) / 1000.0
+            lon = lon_deg + (lon_min + lon_min_frac) / 60.0
+            if lon_str[8] == "W":
+                lon = -lon
+
+            gps_alt = int(line[30:35])
+            timestamp = datetime(base_date.year, base_date.month, base_date.day,
+                                 hours, minutes, seconds)
+            coordinates.append((lat, lon, float(gps_alt), timestamp))
+        except (ValueError, IndexError):
+            continue
     return [coordinates]
 
 
@@ -148,7 +167,7 @@ def compute_track_stats(segments: list[Segment]) -> TrackStats:
 
     points = flatten_segments(segments)
     if not points:
-        return TrackStats(0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        return TrackStats(0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, date=None)
 
     lats = [p[0] for p in points]
     lons = [p[1] for p in points]
@@ -162,7 +181,7 @@ def compute_track_stats(segments: list[Segment]) -> TrackStats:
         max(0.0, elevs[i] - elevs[i - 1]) for i in range(1, len(elevs))
     )
 
-    date = ""
+    date: Optional[str] = None
     if points[0][3] is not None:
         try:
             date = str(points[0][3].date())
