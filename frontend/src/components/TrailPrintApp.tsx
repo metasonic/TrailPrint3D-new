@@ -20,6 +20,9 @@ import {
 const DEFAULT_SETTINGS: GenerationSettings = {
   shape: "HEXAGON",
   obj_size_mm: 100,
+  shape_rotation: 0,
+  rectangle_height: 100,
+  ellipse_ratio: 0.75,
   elevation_scale: 1.0,
   num_subdivisions: 4,
   min_thickness: 2.0,
@@ -37,9 +40,11 @@ const DEFAULT_SETTINGS: GenerationSettings = {
   roads_big: false,
   roads_med: false,
   roads_small: false,
+  trail_name: "",
 };
 
 const MAX_POLL_ATTEMPTS = 300; // 10 minutes at 2 s interval
+const SESSION_KEY = "tp3d_job";
 
 function useDebounce<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -110,7 +115,56 @@ export default function TrailPrintApp() {
   // handlePreview is stable (useCallback []); include it for exhaustive-deps correctness
   }, [debouncedSettings, fileId, handlePreview]);
 
+  const clearPoll = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  const _startPolling = useCallback((job_id: string, gen: number) => {
+    let pollAttempts = 0;
+    pollRef.current = setInterval(async () => {
+      if (gen !== exportGenRef.current) {
+        clearInterval(pollRef.current ?? undefined);
+        return;
+      }
+      pollAttempts++;
+      if (pollAttempts > MAX_POLL_ATTEMPTS) {
+        clearPoll();
+        sessionStorage.removeItem(SESSION_KEY);
+        setJobStatus((s) => s ? { ...s, status: "failed", error: "Export timed out" } : null);
+        return;
+      }
+      try {
+        const status = await getJobStatus(job_id);
+        setJobStatus(status);
+        if (status.status === "done" || status.status === "failed") {
+          clearPoll();
+          sessionStorage.removeItem(SESSION_KEY);
+        }
+      } catch (e: unknown) {
+        if (e instanceof SyntaxError) {
+          clearPoll();
+          sessionStorage.removeItem(SESSION_KEY);
+          setJobStatus((s) => s ? { ...s, status: "failed", error: "Invalid server response" } : null);
+        } else if (e instanceof PollError) {
+          if (e.status === 404) {
+            clearPoll();
+            sessionStorage.removeItem(SESSION_KEY);
+            setJobStatus((s) => s ? { ...s, status: "failed", error: "Export job expired — please re-export" } : null);
+          } else if (e.status === 503) {
+            setJobStatus((s) => s && s.status !== "done" && s.status !== "failed"
+              ? { ...s, message: "Server busy, retrying…" } : s);
+          }
+        }
+      }
+    }, 2000);
+  }, [clearPoll]);
+
   const handleFile = useCallback(async (file: File) => {
+    // Cancel any in-flight export poll before starting fresh
+    clearPoll();
     setUploadError(null);
     setPreviewError(null);
     setGlbUrl(null);
@@ -132,7 +186,7 @@ export default function TrailPrintApp() {
     } finally {
       setUploadLoading(false);
     }
-  }, [settings, handlePreview]);
+  }, [settings, handlePreview, clearPoll]);
 
   const handleRegenerate = useCallback(() => {
     if (fileId) handlePreview(fileId, settings);
@@ -142,13 +196,6 @@ export default function TrailPrintApp() {
     key: K,
     value: GenerationSettings[K]
   ) => setSettings((s) => ({ ...s, [key]: value }));
-
-  const clearPoll = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  }, []);
 
   const handleExport = useCallback(async (fmt: "STL" | "OBJ" | "3MF") => {
     if (!fileId) return;
@@ -166,40 +213,10 @@ export default function TrailPrintApp() {
       if (gen !== exportGenRef.current) return;
 
       setJobStatus((s) => (s ? { ...s, job_id } : null));
+      // Persist job for recovery after page refresh
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify({ job_id, format: fmt }));
 
-      let pollAttempts = 0;
-      pollRef.current = setInterval(async () => {
-        if (gen !== exportGenRef.current) {
-          clearInterval(pollRef.current ?? undefined);
-          return;
-        }
-        pollAttempts++;
-        if (pollAttempts > MAX_POLL_ATTEMPTS) {
-          clearPoll();
-          setJobStatus((s) => s ? { ...s, status: "failed", error: "Export timed out" } : null);
-          return;
-        }
-        try {
-          const status = await getJobStatus(job_id);
-          setJobStatus(status);
-          if (status.status === "done" || status.status === "failed") clearPoll();
-        } catch (e: unknown) {
-          if (e instanceof SyntaxError) {
-            clearPoll();
-            setJobStatus((s) => s ? { ...s, status: "failed", error: "Invalid server response" } : null);
-          } else if (e instanceof PollError) {
-            if (e.status === 404) {
-              clearPoll();
-              setJobStatus((s) => s ? { ...s, status: "failed", error: "Export job expired — please re-export" } : null);
-            } else if (e.status === 503) {
-              setJobStatus((s) => s && s.status !== "done" && s.status !== "failed"
-                ? { ...s, message: "Server busy, retrying…" } : s);
-            }
-            // Other HTTP errors: keep polling silently (transient network issue)
-          }
-          // Non-PollError network hiccups: keep polling silently
-        }
-      }, 2000);
+      _startPolling(job_id, gen);
     } catch (e: unknown) {
       if (gen !== exportGenRef.current) return;
       setJobStatus({
@@ -211,7 +228,23 @@ export default function TrailPrintApp() {
         files: [],
       });
     }
-  }, [fileId, settings, clearPoll]);
+  }, [fileId, settings, clearPoll, _startPolling]);
+
+  // Resume polling if user refreshed during an export
+  useEffect(() => {
+    const saved = sessionStorage.getItem(SESSION_KEY);
+    if (!saved) return;
+    try {
+      const { job_id, format } = JSON.parse(saved) as { job_id: string; format: "STL" | "OBJ" | "3MF" };
+      setExportFormat(format);
+      setJobStatus({ job_id, status: "pending", progress: 0, message: "Resuming export…", files: [] });
+      const gen = ++exportGenRef.current;
+      _startPolling(job_id, gen);
+    } catch {
+      sessionStorage.removeItem(SESSION_KEY);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => () => {
@@ -232,18 +265,21 @@ export default function TrailPrintApp() {
     handleFile(f);
   };
 
+  const isExporting = jobStatus?.status === "running" || jobStatus?.status === "pending";
+
   return (
     <div className="app-grid">
       {/* ── Left panel ── */}
       <aside className="sidebar">
         <header className="app-header">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" style={{ color: "#60a5fa" }}>
             <path d="M3 17l4-8 4 4 3-6 4 8" />
             <rect x="2" y="19" width="20" height="2" rx="1" fill="currentColor" stroke="none" />
           </svg>
           <h1>TrailPrint3D</h1>
           <span>GPX → 3D Print</span>
         </header>
+
         {/* Upload zone */}
         <section
           className={`upload-zone${isDragging ? " dragging" : ""}${fileId ? " has-file" : ""}`}
@@ -269,11 +305,6 @@ export default function TrailPrintApp() {
             style={{ display: "none" }}
             onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
           />
-          <svg className="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-            <polyline points="17 8 12 3 7 8"/>
-            <line x1="12" y1="3" x2="12" y2="15"/>
-          </svg>
           {uploadLoading ? (
             <>
               <span className="spinner" aria-hidden="true" />
@@ -288,6 +319,11 @@ export default function TrailPrintApp() {
             </div>
           ) : (
             <>
+              <svg className="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
               <p>Drop a GPX / IGC file</p>
               <p className="muted">or click to browse</p>
             </>
@@ -300,21 +336,32 @@ export default function TrailPrintApp() {
         {/* Settings */}
         {fileId && (
           <>
-            <label style={{ marginTop: "0.25rem" }}>
-              <span>Trail Name</span>
-              <input
-                type="text"
-                maxLength={100}
-                placeholder="e.g. Mont Blanc Tour"
-                value={settings.trail_name ?? ""}
-                onChange={(e) => updateSetting("trail_name", e.target.value)}
-              />
-            </label>
+            <details open className="settings-group">
+              <summary>Trail Name</summary>
+              <label htmlFor="trail-name">
+                Name
+                <input
+                  id="trail-name"
+                  type="text"
+                  maxLength={100}
+                  placeholder="e.g. Mont Blanc Tour"
+                  inputMode="text"
+                  autoComplete="off"
+                  value={settings.trail_name ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    // Silently strip characters the backend pattern rejects
+                    updateSetting("trail_name", v.replace(/[^a-zA-Z0-9 _\-\.]/g, ""));
+                  }}
+                />
+              </label>
+            </details>
 
             <details open className="settings-group">
               <summary>Shape &amp; Size</summary>
-              <label>Shape
+              <label htmlFor="shape-select">Shape
                 <select
+                  id="shape-select"
                   value={settings.shape}
                   onChange={(e) => updateSetting("shape", e.target.value as GenerationSettings["shape"])}
                 >
@@ -326,49 +373,62 @@ export default function TrailPrintApp() {
                   <option value="HEART">Heart</option>
                 </select>
               </label>
-              <label>Size (mm)
-                <input type="number" min={5} max={10000} value={settings.obj_size_mm}
+              <label htmlFor="size-mm">Size (mm)
+                <input id="size-mm" type="number" min={5} max={10000} value={settings.obj_size_mm}
                   onChange={(e) => updateSetting("obj_size_mm", +e.target.value)} />
               </label>
-              <label>Rotation (°)
-                <input type="range" min={-180} max={180} value={settings.shape_rotation ?? 0}
-                  onChange={(e) => updateSetting("shape_rotation", +e.target.value)} />
-                <span>{settings.shape_rotation ?? 0}°</span>
+              {settings.shape === "SQUARE" && (
+                <label htmlFor="rect-height">Rectangle Height (mm)
+                  <input id="rect-height" type="number" min={5} max={10000} value={settings.rectangle_height ?? 100}
+                    onChange={(e) => updateSetting("rectangle_height", +e.target.value)} />
+                </label>
+              )}
+              {settings.shape === "ELLIPSE" && (
+                <label htmlFor="ellipse-ratio">Ellipse Ratio (0.1–3)
+                  <input id="ellipse-ratio" type="number" min={0.1} max={3} step={0.05} value={settings.ellipse_ratio ?? 0.75}
+                    onChange={(e) => updateSetting("ellipse_ratio", +e.target.value)} />
+                </label>
+              )}
+              <label htmlFor="rotation-range">Rotation (°)
+                <input id="rotation-range" type="range" min={-180} max={180} value={settings.shape_rotation ?? 0}
+                  onChange={(e) => updateSetting("shape_rotation", +e.target.value || 0)} />
+                <span style={{ fontVariantNumeric: "tabular-nums" }}>{settings.shape_rotation ?? 0}°</span>
               </label>
             </details>
 
             <details open className="settings-group">
               <summary>Terrain</summary>
-              <label>Elevation Scale
-                <input type="number" min={0} max={100} step={0.1} value={settings.elevation_scale}
+              <label htmlFor="elev-scale">Elevation Scale
+                <input id="elev-scale" type="number" min={0} max={100} step={0.1} value={settings.elevation_scale}
                   onChange={(e) => updateSetting("elevation_scale", +e.target.value)} />
               </label>
-              <label>Resolution (1–8)
-                <input type="range" min={1} max={8} value={settings.num_subdivisions}
+              <label htmlFor="resolution-range">Resolution (1–8)
+                <input id="resolution-range" type="range" min={1} max={8} value={settings.num_subdivisions}
                   onChange={(e) => updateSetting("num_subdivisions", +e.target.value)} />
-                <span>
-                  {settings.num_subdivisions}
-                  {(settings.num_subdivisions ?? 4) > 4 ? " — full detail in export only" : ""}
-                </span>
+                <span style={{ fontVariantNumeric: "tabular-nums" }}>{settings.num_subdivisions}</span>
               </label>
-              <label>Min Thickness (mm)
-                <input type="number" min={0.5} max={50} step={0.5} value={settings.min_thickness}
+              <p className="muted" style={{ fontSize: "0.8rem" }}>
+                {(settings.num_subdivisions ?? 4) > 4 ? "Resolution > 4 renders at full detail in export only." : "Higher resolution increases generation time."}
+              </p>
+              <label htmlFor="min-thick">Min Thickness (mm)
+                <input id="min-thick" type="number" min={0.5} max={50} step={0.5} value={settings.min_thickness}
                   onChange={(e) => updateSetting("min_thickness", +e.target.value)} />
               </label>
             </details>
 
             <details className="settings-group">
               <summary>Trail</summary>
-              <label>Path Thickness (mm)
-                <input type="number" min={0.1} max={5} step={0.1} value={settings.path_thickness}
+              <label htmlFor="path-thick">Path Thickness (mm)
+                <input id="path-thick" type="number" min={0.1} max={5} step={0.1} value={settings.path_thickness}
                   onChange={(e) => updateSetting("path_thickness", +e.target.value)} />
               </label>
             </details>
 
             <details className="settings-group">
               <summary>Elevation API</summary>
-              <label>Source
+              <label htmlFor="api-select">Source
                 <select
+                  id="api-select"
                   value={settings.api}
                   onChange={(e) => updateSetting("api", e.target.value as GenerationSettings["api"])}
                 >
@@ -398,7 +458,7 @@ export default function TrailPrintApp() {
                 onChange={(e) => updateSetting("roads_med", e.target.checked)} /> Secondary Roads</label>
             </details>
 
-            <button type="button" className="btn-primary" onClick={handleRegenerate} disabled={previewLoading}>
+            <button type="button" className="btn-primary btn-generate" onClick={handleRegenerate} disabled={previewLoading}>
               {previewLoading ? "Generating…" : "↻ Regenerate Preview"}
             </button>
             {previewError && (
@@ -412,7 +472,7 @@ export default function TrailPrintApp() {
       <section className="preview-area" aria-label="3D terrain preview">
         <Preview3D
           glbUrl={glbUrl}
-          loading={previewLoading}
+          loading={previewLoading || uploadLoading}
           onError={(msg) => setPreviewError(msg)}
         />
       </section>
@@ -428,7 +488,6 @@ export default function TrailPrintApp() {
                 type="button"
                 className={`btn-export${exportFormat === fmt ? " active" : ""}`}
                 onClick={() => setExportFormat(fmt)}
-                disabled={jobStatus?.status === "running" || jobStatus?.status === "pending"}
                 aria-pressed={exportFormat === fmt}
               >
                 {fmt}
@@ -436,10 +495,9 @@ export default function TrailPrintApp() {
             ))}
             <button
               type="button"
-              className="btn-primary"
-              style={{ width: "auto", padding: "0.45rem 1rem", marginLeft: "0.25rem" }}
+              className="btn-primary btn-generate-export"
               onClick={() => handleExport(exportFormat)}
-              disabled={jobStatus?.status === "running" || jobStatus?.status === "pending"}
+              disabled={isExporting}
             >
               Generate {exportFormat}
             </button>
@@ -467,13 +525,18 @@ export default function TrailPrintApp() {
                   style={{ width: `${jobStatus.progress}%` }}
                 />
               </div>
-              <span className="progress-label">
+              <span className={`progress-label${jobStatus.status === "failed" ? " progress-label--error" : ""}`}>
                 {jobStatus.status === "done"
                   ? "✓ Ready to download"
                   : jobStatus.status === "failed"
                   ? `✗ ${jobStatus.error ?? "Export failed"}`
                   : `${jobStatus.message || jobStatus.status} — ${jobStatus.progress}%`}
               </span>
+              {jobStatus.status === "failed" && (
+                <button type="button" className="btn-export" onClick={() => handleExport(exportFormat)}>
+                  ↺ Retry
+                </button>
+              )}
               {jobStatus.status === "done" &&
                 jobStatus.files.map((f) => (
                   <a key={f} href={downloadUrl(jobStatus.job_id, f)} download={f} className="btn-download">

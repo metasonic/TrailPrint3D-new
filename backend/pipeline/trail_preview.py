@@ -54,8 +54,9 @@ def build_trail_mesh(
     if overwrite_elevation and len(terrain.vertices) > 0:
         world_pts = _cast_on_terrain(world_pts, terrain)
 
-    # Raise path slightly above surface to avoid z-fighting
-    world_pts[:, 2] += path_thickness * 0.001
+    # Raise path by one full radius so the tube sits on the terrain surface
+    # rather than half-embedded in it.
+    world_pts[:, 2] += path_thickness / 2
 
     tube = _build_tube(world_pts, radius=path_thickness / 2, sections=6)
     return tube
@@ -150,11 +151,15 @@ def _build_tube(
         j2 = (j + 1) % sections
         faces.append([center_e, last_ring_base + j, last_ring_base + j2])
 
-    return trimesh.Trimesh(
+    mesh = trimesh.Trimesh(
         vertices=np.array(verts, dtype=np.float64),
         faces=np.array(faces),
         process=False,
     )
+    # Body-face winding is inward by construction; reverse all face indices so
+    # normals point outward (positive volume = correct for 3D printing / Three.js).
+    mesh.faces = mesh.faces[:, ::-1]
+    return mesh
 
 
 def compute_scale_hor(

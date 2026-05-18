@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import math
 import os
 import struct
@@ -18,6 +19,8 @@ from pathlib import Path
 from typing import Optional
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -225,7 +228,9 @@ def _fetch_tile(zoom: int, x: int, y: int, config: ElevationConfig) -> bytes:
         raise requests.HTTPError(
             f"Terrain tile fetch failed: HTTP {e.response.status_code}"
         ) from None
-    path.write_bytes(resp.content)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_bytes(resp.content)
+    tmp.replace(path)  # atomic rename; safe under concurrent requests
     return resp.content
 
 
@@ -263,7 +268,11 @@ def get_elevation_terrain_tiles(
     for i, ((tx, ty), entries) in enumerate(tile_map.items()):
         if (tx, ty) not in tile_cache:
             raw = _fetch_tile(zoom, tx, ty, config)
-            tile_cache[(tx, ty)] = _parse_png_rgb(raw)
+            try:
+                tile_cache[(tx, ty)] = _parse_png_rgb(raw)
+            except Exception:
+                logger.warning("Malformed terrain tile %d/%d/%d; using zero elevation", zoom, tx, ty)
+                tile_cache[(tx, ty)] = [[(0, 0, 0)] * 256 for _ in range(256)]
         rgb_grid = tile_cache[(tx, ty)]
         for idx, lat, lon in entries:
             px, py = _lonlat_to_pixelxy(lon, lat, zoom)

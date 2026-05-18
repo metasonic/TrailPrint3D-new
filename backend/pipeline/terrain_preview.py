@@ -86,7 +86,7 @@ def build_terrain_mesh(
     # Fixed mode:  autoScale = 10 / (relief_km), so the elevation range is 10 mm.
     if config.fixed_elevation_scale:
         elev_diff = float(elev_grid.max() - elev_grid.min())
-        auto_scale = (10.0 / (elev_diff / 1000.0)) if elev_diff > 0 else scale_hor
+        auto_scale = (10.0 / (elev_diff / 1000.0)) if elev_diff > 0 else 10.0
     else:
         auto_scale = scale_hor
 

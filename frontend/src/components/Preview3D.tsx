@@ -17,6 +17,11 @@ function disposeMesh(mesh: THREE.Mesh) {
 }
 
 export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
+  const ariaLabel = glbUrl
+    ? "3D terrain preview — model loaded"
+    : loading
+    ? "3D terrain preview — loading"
+    : "3D terrain preview — no model loaded";
   const mountRef = useRef<HTMLDivElement>(null);
   // Ref to always invoke the latest onError without stale-closure risk
   const onErrorRef = useRef(onError);
@@ -33,7 +38,7 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
     if (!mountRef.current) return;
     const el = mountRef.current;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(el.clientWidth, el.clientHeight);
     renderer.shadowMap.enabled = true;
@@ -42,7 +47,7 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
     rendererRef.current = renderer;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1a1a2e);
+    scene.background = new THREE.Color(0x0d0d1a); // matches CSS --bg
     sceneRef.current = scene;
 
     const ambient = new THREE.AmbientLight(0xffffff, 0.6);
@@ -56,7 +61,7 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
     fill.position.set(-60, 40, -80);
     scene.add(fill);
 
-    const grid = new THREE.GridHelper(400, 20, 0x333355, 0x222244);
+    const grid = new THREE.GridHelper(400, 20, 0x3a3a5a, 0x2a2a48);
     grid.position.y = -0.5;
     scene.add(grid);
     gridRef.current = grid;
@@ -70,7 +75,7 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
     controls.dampingFactor = 0.08;
     controls.minDistance = 5;
     controls.maxDistance = 2000;
-    controls.maxPolarAngle = Math.PI * 0.85;
+    controls.maxPolarAngle = Math.PI * 0.75;
     controlsRef.current = controls;
 
     let animId: number;
@@ -201,8 +206,8 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div
         ref={mountRef}
-        style={{ width: "100%", height: "100%" }}
-        aria-label="3D terrain preview canvas"
+        style={{ width: "100%", height: "100%", touchAction: "none" }}
+        aria-label={ariaLabel}
         role="img"
       />
       {/* Persistent live region for loading announcements — always in DOM so NVDA/JAWS pick up changes */}
@@ -219,18 +224,23 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: loading ? "rgba(26,26,46,0.7)" : "transparent",
+          background: loading ? "rgba(13,13,26,0.75)" : "transparent",
+          backdropFilter: loading ? "blur(4px)" : undefined,
           color: "#fff",
           fontSize: "1rem",
           gap: "0.5rem",
           pointerEvents: loading ? undefined : "none",
         }}
       >
-        {loading && (
+        {loading ? (
           <>
             <span className="spinner" aria-hidden="true" />
             Generating preview…
           </>
+        ) : glbUrl ? (
+          "Preview ready"
+        ) : (
+          ""
         )}
       </div>
       {!glbUrl && !loading && (
@@ -243,7 +253,7 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
             flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
-            color: "#667",
+            color: "#8899cc",
             pointerEvents: "none",
           }}
         >

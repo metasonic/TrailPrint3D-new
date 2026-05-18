@@ -29,8 +29,8 @@ async function fetchWithTimeout(
 }
 
 function parseError(res: Response, fallback: string): string {
-  // Include HTTP status code so the message is never empty under HTTP/2
-  return `HTTP ${res.status}: ${res.statusText || fallback}`;
+  // Always show the fallback message; statusText is unreliable under HTTP/2.
+  return `HTTP ${res.status}: ${fallback}`;
 }
 
 export interface TrackStats {
@@ -54,6 +54,8 @@ export interface GenerationSettings {
   shape?: "HEXAGON" | "SQUARE" | "CIRCLE" | "OCTAGON" | "ELLIPSE" | "HEART";
   obj_size_mm?: number;
   shape_rotation?: number;
+  rectangle_height?: number;
+  ellipse_ratio?: number;
   elevation_scale?: number;
   num_subdivisions?: number;
   min_thickness?: number;

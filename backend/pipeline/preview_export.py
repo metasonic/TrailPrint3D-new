@@ -101,6 +101,7 @@ def generate_preview(
         shape_rotation=float(settings.shape_rotation),
         rectangle_height=float(settings.rectangle_height),
         ellipse_ratio=settings.ellipse_ratio,
+        fixed_elevation_scale=getattr(settings, "fixed_elevation_scale", False),
     )
     elev_config.min_lat = bbox[0]
     elev_config.min_lon = bbox[1]
