@@ -15,3 +15,7 @@ build.py
 # Other cache
 __pycache__/
 .claude
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/

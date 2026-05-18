@@ -33,7 +33,9 @@ def export_to_STL(zobj, force="STL"):
             up_axis="Z",
             )
     else:
-        bpy.ops.wm.stl_export(filepath=exportPath + zobj.name + ".stl", export_selected_objects=True)
+        bpy.ops.wm.stl_export(filepath=exportPath + zobj.name + ".stl",
+                               export_selected_objects=True,
+                               apply_modifiers=True)
 
     zobj.select_set(False)  # Select the object
 
@@ -69,7 +71,9 @@ def export_selected_to_STL(force="STL"):
 
             _progress.WarningsOverlay.add_warning("Exported as OBJ", "ok")
         else:
-            bpy.ops.wm.stl_export(filepath=exportPath + zobj.name + ".stl", export_selected_objects=True)
+            bpy.ops.wm.stl_export(filepath=exportPath + zobj.name + ".stl",
+                                   export_selected_objects=True,
+                                   apply_modifiers=True)
             _progress.WarningsOverlay.add_warning("Exported as STL", "ok")
 
 
@@ -205,6 +209,7 @@ def export_selected_to_3mf():
         _progress.WarningsOverlay.add_warning("3MF Addon not installed", "error")
         return
 
+    thumbnail_ok = os.path.isfile(thumbnail_path)
     try:
         result = _3mf_api.export_3mf(
             filepath=full_path,
@@ -212,9 +217,9 @@ def export_selected_to_3mf():
             use_mesh_modifiers=True,
             global_scale=0.001,
             coordinate_precision=4,
-            thumbnail_mode="CUSTOM",
+            thumbnail_mode="CUSTOM" if thumbnail_ok else "NONE",
             thumbnail_resolution=256,
-            thumbnail_image=thumbnail_path
+            **({"thumbnail_image": thumbnail_path} if thumbnail_ok else {}),
         )
         print(f"Successfully exported to: {full_path}")
         _progress.WarningsOverlay.add_warning("Exported as 3mf", "ok")
@@ -238,6 +243,7 @@ def export_selected_to_3mf():
 
 
 def customThumbnail(objects, output_path, resolution=256):
+    import os as _os
     scene = bpy.context.scene
 
     # 1. Setup Render Resolution
@@ -248,6 +254,9 @@ def customThumbnail(objects, output_path, resolution=256):
     scene.render.resolution_percentage = 100
 
     # 2. Find 3D View (Crucial for saving state)
+    # In headless mode bpy.context.screen may be None — guard against it.
+    if not hasattr(bpy.context, 'screen') or bpy.context.screen is None:
+        return
     area = next((a for a in bpy.context.screen.areas if a.type == 'VIEW_3D'), None)
     if not area:
         return # Safety exit
@@ -355,4 +364,33 @@ def install_3mf_extension():
         return True
     except Exception as e:
         print(f"Installation failed: {e}")
+        return False
+
+
+def export_to_glb(output_path: str) -> bool:
+    """Export all mesh objects in the scene as a single GLB for browser preview.
+
+    Works in both GUI and headless Blender mode — does not need a VIEW_3D area.
+    Returns True on success.
+    """
+    import os as _os
+    try:
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in bpy.context.scene.objects:
+            if obj.type in {'MESH', 'CURVE', 'SURFACE', 'META', 'FONT'}:
+                obj.select_set(True)
+
+        _os.makedirs(_os.path.dirname(output_path), exist_ok=True)
+
+        bpy.ops.export_scene.gltf(
+            filepath=output_path,
+            export_format='GLB',
+            use_selection=True,
+            export_materials='EXPORT',
+            export_apply=True,
+        )
+        print(f"GLB preview exported to: {output_path}")
+        return True
+    except Exception as exc:
+        print(f"GLB export failed: {exc}")
         return False

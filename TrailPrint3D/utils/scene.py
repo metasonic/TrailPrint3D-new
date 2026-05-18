@@ -1,3 +1,4 @@
+import os
 import bpy  # type: ignore
 import bmesh  # type: ignore
 import random
@@ -24,14 +25,18 @@ def zoom_camera_to_selected(obj):
     except ReferenceError:
         return
 
+    # In --background mode bpy.context.screen is None — skip viewport ops.
+    if not getattr(bpy.context, 'screen', None):
+        return
+    areas = [a for a in bpy.context.screen.areas if a.type == 'VIEW_3D']
+    if not areas:
+        return
+
     bpy.ops.object.select_all(action='DESELECT')
+    obj.select_set(True)
 
-    obj.select_set(True)  # Select the object
-
-    area = [area for area in bpy.context.screen.areas if area.type == "VIEW_3D"][0]
-    region = area.regions[-1]
-
-    with bpy.context.temp_override(area=area, region=region):
+    region = areas[0].regions[-1]
+    with bpy.context.temp_override(area=areas[0], region=region):
         bpy.ops.view3d.view_selected(use_all_regions=False)
 
 
@@ -342,10 +347,11 @@ def getHighestLowest(obj):
     return lowest_z, highest_z
 
 def show_message_box(message, ic = "ERROR", ti = "ERROR"):
-    def draw(self, context):
-        self.layout.label(text=message)
     print(message)
-    bpy.context.window_manager.popup_menu(draw, title=ti, icon=ic)
+    if not os.environ.get('TP3D_HEADLESS'):
+        def draw(self, context):
+            self.layout.label(text=message)
+        bpy.context.window_manager.popup_menu(draw, title=ti, icon=ic)
 
 
 def toggle_console():
