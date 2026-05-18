@@ -23,21 +23,21 @@ const FORMAT_INFO: Record<string, FormatInfo> = {
     label: 'STL',
     description: 'Universal 3D printing format',
     icon: <Layers size={20} />,
-    colorClass: 'text-blue-400',
+    colorClass: 'text-gray-400',
   },
   obj: {
     ext: 'obj',
     label: 'OBJ',
     description: 'Multi-material with colors',
     icon: <FileCode size={20} />,
-    colorClass: 'text-green-400',
+    colorClass: 'text-gray-400',
   },
   '3mf': {
     ext: '3mf',
     label: '3MF',
-    description: 'Modern print-ready format',
+    description: 'Modern print-ready format — recommended',
     icon: <Package size={20} />,
-    colorClass: 'text-purple-400',
+    colorClass: 'text-orange-400',
   },
 }
 

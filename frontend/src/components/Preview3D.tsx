@@ -1,4 +1,4 @@
-import { Component, Suspense, useRef, useState } from 'react'
+import { Component, Suspense, useEffect, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls, useGLTF, Center, Environment } from '@react-three/drei'
 import { AlertTriangle, RotateCcw, MousePointer2 } from 'lucide-react'
@@ -31,9 +31,8 @@ function GLBModel({ url, onLoad }: { url: string; onLoad: () => void }) {
   const { scene } = useGLTF(url)
   const groupRef = useRef<Group>(null)
 
-  // useGLTF resolves synchronously from cache or suspends until loaded.
-  // By the time this component renders, the model is ready — signal the parent.
-  useState(() => { onLoad() })
+  // Signal parent after first render — model is ready by the time this component mounts.
+  useEffect(() => { onLoad() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <Center>

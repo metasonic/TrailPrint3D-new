@@ -117,6 +117,10 @@ def _rg_validate_inputs(flags):
         show_message_box("Export path cant be empty")
         return None
     exportPath = bpy.path.abspath(exportPath)
+    # abspath strips the trailing separator; restore it so string-concatenated
+    # export paths (e.g. exportPath + name + ".stl") produce valid paths.
+    if exportPath and not exportPath.endswith(os.sep):
+        exportPath = exportPath + os.sep
     if not exportPath or exportPath == "":
         show_message_box("Export path is empty! Please select a valid folder.")
         return None
@@ -224,7 +228,7 @@ def _rg_load_coordinates(flags, props):
     try:
         if "gpx_file" in flags and "trail_map" not in flags:
             separate_paths = read_gpx_file()
-        if "gpx_chain" in flags not in flags:
+        if "gpx_chain" in flags and "append_collection" not in flags:
             separate_paths_by_file = read_gpx_directory(props['gpx_chain_path'])
             separate_paths = [seg for file_segs in separate_paths_by_file for seg in file_segs]
         if "jmap" in flags:

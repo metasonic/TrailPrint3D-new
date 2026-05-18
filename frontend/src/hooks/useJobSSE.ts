@@ -76,9 +76,11 @@ export function useJobSSE(jobId: string | null): SSEState & { reset: () => void 
   const startPolling = useCallback(
     (id: string) => {
       stopPolling()
+      let consecutiveFailures = 0
       const poll = async () => {
         try {
           const job = await getJobStatus(id)
+          consecutiveFailures = 0
           setState({
             status: job.status,
             progress: job.progress,
@@ -91,7 +93,15 @@ export function useJobSSE(jobId: string | null): SSEState & { reset: () => void 
             stopPolling()
           }
         } catch {
-          // ignore transient errors
+          consecutiveFailures++
+          if (consecutiveFailures >= 5) {
+            setState(prev => ({
+              ...prev,
+              status: 'failed',
+              error: 'Lost connection to the server. Please refresh and check your job status.',
+            }))
+            stopPolling()
+          }
         }
       }
       pollRef.current = setInterval(poll, 3_000)

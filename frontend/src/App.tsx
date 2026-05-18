@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react'
-import { AlertCircle, RefreshCw, Settings2, MapPin } from 'lucide-react'
+import { AlertCircle, RefreshCw, Settings2, MapPin, Box } from 'lucide-react'
 import GPXUpload from './components/GPXUpload'
 import SettingsPanel, { DEFAULT_PARAMS } from './components/SettingsPanel'
 import ProgressBar from './components/ProgressBar'
@@ -29,13 +29,13 @@ function PageLayout({ children }: { children: React.ReactNode }) {
         {children}
       </main>
       <footer className="border-t border-gray-800 py-3 text-center">
-        <p className="text-xs text-gray-700">
+        <p className="text-xs text-gray-500">
           Powered by{' '}
           <a
             href="https://www.blender.org"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-gray-600 hover:text-gray-400 transition-colors underline underline-offset-2"
+            className="text-gray-400 hover:text-gray-200 transition-colors underline underline-offset-2"
           >
             Blender
           </a>
@@ -58,8 +58,9 @@ function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => voi
       </div>
       <button
         onClick={onRetry}
+        aria-label="Retry the failed operation"
         className="shrink-0 flex items-center gap-1.5 text-xs text-gray-400 hover:text-white
-                   bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded-lg transition-colors"
+                   bg-gray-800 hover:bg-gray-700 px-3 py-2 rounded-lg transition-colors"
       >
         <RefreshCw size={12} />
         Retry
@@ -111,7 +112,6 @@ export default function App() {
       const result = await uploadGPX(file)
       setUploadId(result.upload_id)
       setUploadedFilename(result.filename)
-      // Pre-fill trail name from filename (strip extension)
       const inferredName = result.filename.replace(/\.(gpx|igc)$/i, '').replace(/[-_]/g, ' ')
       setParams(prev => ({ ...prev, trailName: prev.trailName || inferredName }))
       setAppState('uploaded')
@@ -173,7 +173,6 @@ export default function App() {
   // Render
   // ─────────────────────────────────────────────────────────────────────────────
 
-  // Idle / Uploading → full-page upload zone
   if (appState === 'idle' || appState === 'uploading') {
     return (
       <PageLayout>
@@ -185,7 +184,6 @@ export default function App() {
     )
   }
 
-  // Error with no uploadId → show upload zone with banner
   if (appState === 'error' && !uploadId) {
     return (
       <PageLayout>
@@ -210,15 +208,7 @@ export default function App() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Left: 3D preview */}
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-white">3D Preview</h2>
-              <button
-                onClick={handleReset}
-                className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
-              >
-                New file
-              </button>
-            </div>
+            <h2 className="text-lg font-semibold text-white">3D Preview</h2>
             <div className="h-[480px]">
               {glbUrl ? (
                 <Suspense
@@ -231,8 +221,10 @@ export default function App() {
                   <Preview3D glbUrl={glbUrl} />
                 </Suspense>
               ) : (
-                <div className="h-full card flex items-center justify-center text-gray-600 text-sm">
-                  No preview available
+                <div className="h-full card flex flex-col items-center justify-center gap-2">
+                  <Box size={32} className="text-gray-600" />
+                  <span className="text-gray-400 text-sm">3D preview not available</span>
+                  <span className="text-xs text-gray-600">GLB was not generated for this export</span>
                 </div>
               )}
             </div>
@@ -244,14 +236,14 @@ export default function App() {
               <h2 className="text-lg font-semibold text-white">
                 {uploadedFilename || 'Your Map'}
               </h2>
-              <span className="text-xs text-green-400 bg-green-900/30 border border-green-800 px-2 py-0.5 rounded-full">
+              <span className="text-xs text-green-400 bg-green-900/30 border border-green-700 px-2 py-0.5 rounded-full">
                 Done
               </span>
             </div>
 
             <DownloadPanel jobId={jobId} files={outputFiles} />
 
-            <div className="card space-y-3">
+            <div className="border border-dashed border-gray-700 rounded-xl p-4 space-y-3">
               <div className="flex items-center gap-2">
                 <Settings2 size={15} className="text-gray-500" />
                 <span className="text-sm font-medium text-gray-400">Adjust &amp; Regenerate</span>
@@ -263,14 +255,16 @@ export default function App() {
                 onClick={handleRegenerate}
                 className="w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 font-medium
                            transition hover:border-orange-500 hover:text-orange-400 flex items-center
-                           justify-center gap-2 text-gray-300"
+                           justify-center gap-2 text-gray-300 focus:outline-none focus:ring-2
+                           focus:ring-orange-400 focus:ring-offset-2 focus:ring-offset-gray-950"
               >
                 <RefreshCw size={15} />
                 Adjust Settings &amp; Regenerate
               </button>
               <button
                 onClick={handleReset}
-                className="w-full text-xs text-gray-600 hover:text-gray-400 transition-colors py-1"
+                className="w-full text-xs text-gray-500 hover:text-gray-300 transition-colors py-1
+                           focus:outline-none focus:underline"
               >
                 Start over with a new file
               </button>
@@ -287,10 +281,10 @@ export default function App() {
   return (
     <PageLayout>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Settings panel (2/3 width on large screens) */}
-        <div className="lg:col-span-2 space-y-4">
+        {/* Settings panel — pushed below sidebar on mobile so Generate button is first */}
+        <div className="lg:col-span-2 space-y-4 order-2 lg:order-1">
           {/* File info bar */}
-          <div className="flex items-center justify-between bg-gray-900 border border-gray-800 rounded-xl px-4 py-3">
+          <div className="flex items-center justify-between bg-gray-900 border-l-2 border-orange-500/40 border-y border-r border-gray-800 rounded-xl px-4 py-3">
             <div className="flex items-center gap-2 min-w-0">
               <MapPin size={15} className="text-orange-400 shrink-0" />
               <span className="text-sm text-gray-300 truncate font-medium">
@@ -301,7 +295,7 @@ export default function App() {
             {!isGenerating && (
               <button
                 onClick={handleReset}
-                className="text-xs text-gray-600 hover:text-gray-300 shrink-0 ml-2 transition-colors"
+                className="text-xs text-gray-400 hover:text-white underline underline-offset-2 shrink-0 ml-2 transition-colors"
               >
                 Change file
               </button>
@@ -315,17 +309,14 @@ export default function App() {
           />
         </div>
 
-        {/* Right: progress / generate button */}
-        <div className="space-y-4">
-          {/* Error banner */}
+        {/* Sidebar: generate button / progress — appears first on mobile */}
+        <div className="space-y-4 order-1 lg:order-2">
           {appState === 'error' && (
             <ErrorBanner message={errorMessage} onRetry={handleRetry} />
           )}
 
-          {/* Progress */}
-          {isGenerating && jobId && (
+          {isGenerating && (
             <ProgressBar
-              jobId={jobId}
               progress={sse.progress}
               phase={sse.phase}
               message={sse.message}
@@ -333,35 +324,36 @@ export default function App() {
             />
           )}
 
-          {/* Generate button */}
           {!isGenerating && (
             <button
               onClick={handleGenerate}
               disabled={!uploadId}
-              className="w-full rounded-lg bg-orange-600 px-6 py-4 text-lg font-bold transition
-                         hover:bg-orange-500 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full rounded-lg bg-orange-600 px-6 py-4 text-lg font-bold text-white
+                         transition hover:bg-orange-500 active:scale-95
+                         disabled:opacity-50 disabled:cursor-not-allowed
+                         focus:outline-none focus:ring-2 focus:ring-orange-400
+                         focus:ring-offset-2 focus:ring-offset-gray-950"
             >
               Generate 3D Map
             </button>
           )}
 
-          {/* Active settings summary */}
           {!isGenerating && (
-            <div className="card space-y-2 text-xs text-gray-600">
-              <p className="font-semibold text-gray-500 uppercase tracking-wider">Active Settings</p>
+            <div className="card space-y-2 text-xs text-gray-500">
+              <p className="font-semibold uppercase tracking-wider">Active Settings</p>
               <div className="space-y-1">
-                <p>Shape: <span className="text-gray-400">{params.shape ?? DEFAULT_PARAMS.shape}</span></p>
-                <p>Size: <span className="text-gray-400">{params.objSize ?? DEFAULT_PARAMS.objSize} mm</span></p>
-                <p>API: <span className="text-gray-400">{params.api ?? DEFAULT_PARAMS.api}</span></p>
-                <p>Subdivisions: <span className="text-gray-400">{params.num_subdivisions ?? DEFAULT_PARAMS.num_subdivisions}</span></p>
-                <p>Elev. Scale: <span className="text-gray-400">{params.scaleElevation ?? DEFAULT_PARAMS.scaleElevation}×</span></p>
+                <p>Shape: <span className="text-gray-200">{params.shape ?? DEFAULT_PARAMS.shape}</span></p>
+                <p>Size: <span className="text-gray-200">{params.objSize ?? DEFAULT_PARAMS.objSize} mm</span></p>
+                <p>API: <span className="text-gray-200">{params.api ?? DEFAULT_PARAMS.api}</span></p>
+                <p>Subdivisions: <span className="text-gray-200">{params.num_subdivisions ?? DEFAULT_PARAMS.num_subdivisions}</span></p>
+                <p>Elev. Scale: <span className="text-gray-200">{params.scaleElevation ?? DEFAULT_PARAMS.scaleElevation}×</span></p>
               </div>
             </div>
           )}
 
           {!isGenerating && (
-            <p className="text-xs text-gray-700 text-center px-2">
-              Generation typically takes 2–10 minutes depending on area size and enabled elements.
+            <p className="text-xs text-gray-600 text-center px-2">
+              Simple trails: ~30–90 s · Complex with many elements: up to 10 min.
             </p>
           )}
         </div>

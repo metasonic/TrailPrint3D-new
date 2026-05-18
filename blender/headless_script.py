@@ -151,6 +151,10 @@ if not params.get('textFont'):
             params['textFont'] = _fp
             break
 
+# 5d. Inject self-hosted OpenTopoData URL from env if not in params
+if not params.get('selfHosted') and os.environ.get('TP3D_OPENTOPODATA_SELF_HOSTED'):
+    params['selfHosted'] = os.environ['TP3D_OPENTOPODATA_SELF_HOSTED']
+
 # ---------------------------------------------------------------------------
 # 6. bpy is available — set up a clean default scene
 # ---------------------------------------------------------------------------
@@ -277,21 +281,9 @@ except Exception as exc:
 # ---------------------------------------------------------------------------
 
 try:
-    # Select all mesh objects for export
-    bpy.ops.object.select_all(action='DESELECT')
-    for obj in bpy.context.scene.objects:
-        if obj.type == 'MESH':
-            obj.select_set(True)
-
+    from TrailPrint3D.export import export_to_glb  # type: ignore
     glb_path = os.path.join(job_dir, 'preview.glb')
-
-    bpy.ops.export_scene.gltf(
-        filepath=glb_path,
-        export_format='GLB',
-        use_selection=True,
-        export_materials='EXPORT',
-    )
-
+    export_to_glb(glb_path)
     print(json.dumps({'type': 'step', 'step': f'GLB preview exported to {glb_path}'}),
           flush=True)
 

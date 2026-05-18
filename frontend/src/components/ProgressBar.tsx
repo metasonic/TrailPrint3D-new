@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { X, Clock, Zap } from 'lucide-react'
-import { cancelJob } from '../api/client'
 
 interface ProgressBarProps {
-  jobId: string
   progress: number   // 0 – 1
   phase: string
   message: string
@@ -17,7 +15,7 @@ function formatDuration(seconds: number): string {
   return `${m}m ${s}s`
 }
 
-export default function ProgressBar({ jobId, progress, phase, message, onCancel }: ProgressBarProps) {
+export default function ProgressBar({ progress, phase, message, onCancel }: ProgressBarProps) {
   const startRef = useRef<number>(Date.now())
   const [elapsed, setElapsed] = useState(0)
   const [cancelling, setCancelling] = useState(false)
@@ -33,22 +31,21 @@ export default function ProgressBar({ jobId, progress, phase, message, onCancel 
 
   const pct = Math.round(progress * 100)
 
-  // Estimate remaining time based on elapsed and progress
+  // Only show ETA after 5 s and 2% progress, and hide when < 5 s remaining
   let etaText: string | null = null
   if (progress > 0.02 && progress < 0.98 && elapsed > 5) {
     const totalEstimated = elapsed / progress
     const remaining = Math.max(0, totalEstimated - elapsed)
-    etaText = `~${formatDuration(remaining)} remaining`
+    if (remaining > 5) {
+      etaText = `~${formatDuration(remaining)} remaining`
+    }
   }
 
-  const handleCancel = useCallback(async () => {
+  const handleCancel = useCallback(() => {
     if (cancelling) return
     setCancelling(true)
-    try {
-      await cancelJob(jobId)
-    } catch { /* ignore */ }
     onCancel?.()
-  }, [cancelling, jobId, onCancel])
+  }, [cancelling, onCancel])
 
   return (
     <div className="card space-y-4">
@@ -89,9 +86,11 @@ export default function ProgressBar({ jobId, progress, phase, message, onCancel 
           ].join(' ')}
           style={{ width: `${Math.max(pct, 2)}%` }}
           role="progressbar"
+          aria-label="Generation progress"
           aria-valuenow={pct}
           aria-valuemin={0}
           aria-valuemax={100}
+          aria-valuetext={`${pct}% — ${phase || 'Generating'}`}
         />
       </div>
 

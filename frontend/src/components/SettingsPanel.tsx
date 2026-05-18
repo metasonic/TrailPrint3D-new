@@ -154,7 +154,7 @@ interface ToggleProps {
 
 function Toggle({ checked, onChange, label, disabled, hint }: ToggleProps) {
   return (
-    <label className="flex items-start gap-3 cursor-pointer group">
+    <div className="flex items-start gap-3 cursor-pointer group">
       <button
         type="button"
         role="switch"
@@ -180,7 +180,7 @@ function Toggle({ checked, onChange, label, disabled, hint }: ToggleProps) {
         </span>
         {hint && <p className="text-xs text-gray-600 mt-0.5">{hint}</p>}
       </div>
-    </label>
+    </div>
   )
 }
 
@@ -209,6 +209,7 @@ function SliderRow({ label, value, min, max, step = 1, onChange, disabled, unit,
             max={max}
             step={step}
             disabled={disabled}
+            aria-label={label}
             onChange={e => onChange(parseFloat(e.target.value) || min)}
             className="w-20 text-right bg-gray-800 border border-gray-700 rounded px-2 py-0.5
                        text-sm text-gray-200 focus:outline-none focus:ring-1 focus:ring-orange-500
@@ -224,6 +225,7 @@ function SliderRow({ label, value, min, max, step = 1, onChange, disabled, unit,
         step={step}
         value={value}
         disabled={disabled}
+        aria-label={label}
         onChange={e => onChange(parseFloat(e.target.value))}
         className="w-full disabled:opacity-50"
       />
@@ -284,12 +286,13 @@ export default function SettingsPanel({ params, onChange, disabled = false }: Se
         {/* Shape selector */}
         <div>
           <label className="label">Shape</label>
-          <div className="flex flex-wrap gap-2">
+          <div role="group" aria-label="Shape" className="flex flex-wrap gap-2">
             {ALL_SHAPE_OPTIONS.map(opt => (
               <button
                 key={opt.value}
                 type="button"
                 disabled={disabled}
+                aria-pressed={shape === opt.value}
                 onClick={() => onChange('shape', opt.value)}
                 className={[
                   'flex flex-col items-center gap-1 px-3 py-2 rounded-lg border text-xs',
@@ -502,7 +505,7 @@ export default function SettingsPanel({ params, onChange, disabled = false }: Se
         </div>
 
         {/* Land cover */}
-        <div className="space-y-2">
+        <div className="space-y-2 border-t border-gray-800 pt-4">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Land Cover</p>
           <Toggle
             checked={get('col_fActive')}
@@ -543,7 +546,7 @@ export default function SettingsPanel({ params, onChange, disabled = false }: Se
         </div>
 
         {/* Buildings */}
-        <div className="space-y-2">
+        <div className="space-y-2 border-t border-gray-800 pt-4">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Buildings</p>
           <Toggle
             checked={get('el_bActive')}
@@ -566,7 +569,7 @@ export default function SettingsPanel({ params, onChange, disabled = false }: Se
         </div>
 
         {/* Roads */}
-        <div className="space-y-2">
+        <div className="space-y-2 border-t border-gray-800 pt-4">
           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Roads</p>
           <Toggle
             checked={get('el_sBigActive')}
@@ -601,19 +604,20 @@ export default function SettingsPanel({ params, onChange, disabled = false }: Se
         </div>
 
         {/* City boundaries */}
+        <div className="border-t border-gray-800 pt-4">
         <Toggle
           checked={get('col_cActive')}
           onChange={val => onChange('col_cActive', val)}
           label="City / Admin Boundaries"
           disabled={disabled}
         />
-
         <Toggle
           checked={get('col_KeepManifold')}
           onChange={val => onChange('col_KeepManifold', val)}
           label="Keep Manifold (auto-repair mesh)"
           disabled={disabled}
         />
+        </div>
       </Section>
 
       {/* ── Trail ──────────────────────────────────────────────────────────── */}

@@ -34,18 +34,20 @@ RUN wget -q "https://download.blender.org/release/Blender4.5/${BLENDER_ARCHIVE}.
     && ln -s /opt/blender/blender /usr/local/bin/blender \
     && rm /tmp/blender.tar.xz
 
-# Install Python deps into Blender's bundled Python
+# Install Python deps into Blender's bundled Python (requests for API calls,
+# redis for cooperative job cancellation from inside the Blender process)
 RUN /opt/blender/${BLENDER_VERSION}/python/bin/python3.11 -m ensurepip --upgrade && \
     /opt/blender/${BLENDER_VERSION}/python/bin/python3.11 -m pip install --upgrade pip && \
-    /opt/blender/${BLENDER_VERSION}/python/bin/python3.11 -m pip install requests
+    /opt/blender/${BLENDER_VERSION}/python/bin/python3.11 -m pip install requests redis
 
-# Install the io_mesh_3mf (3MF) extension for Blender
-# Run Blender once headlessly to trigger extension setup
+# Refresh extension repos and install the io_mesh_3mf (3MF) extension
 RUN Xvfb :99 -screen 0 1280x720x24 & \
     sleep 2 && DISPLAY=:99 \
     blender --background --python-expr \
-        "import bpy; bpy.ops.extensions.repo_refresh_all(); print('Blender init OK')" \
-    || true
+        "import bpy; bpy.ops.extensions.repo_refresh_all(); \
+         result = bpy.ops.extensions.package_install(pkg_id='io_mesh_3mf'); \
+         print('3MF install:', result)" \
+    || echo "3MF extension install failed — will fall back to STL-only export"
 
 # ─────────────────────────────────────────────────────────────────
 #  Stage 3 – App (FastAPI web server)

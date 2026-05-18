@@ -104,6 +104,8 @@ export default function GPXUpload({ onUpload, isUploading, disabled = false }: G
         role="button"
         tabIndex={isInteractive ? 0 : -1}
         aria-label="Upload GPX or IGC file"
+        aria-busy={isUploading}
+        aria-disabled={!isInteractive}
         className={[
           'relative w-full max-w-lg rounded-2xl border-2 border-dashed p-10',
           'flex flex-col items-center justify-center gap-4 cursor-pointer',
@@ -178,7 +180,7 @@ export default function GPXUpload({ onUpload, isUploading, disabled = false }: G
 
       {/* Validation error */}
       {validationError && (
-        <div className="mt-4 flex items-start gap-2 text-sm text-red-400 bg-red-900/20 border border-red-800 rounded-lg px-4 py-3 max-w-lg w-full">
+        <div role="alert" className="mt-4 flex items-start gap-2 text-sm text-red-400 bg-red-900/20 border border-red-800 rounded-lg px-4 py-3 max-w-lg w-full">
           <AlertCircle size={16} className="shrink-0 mt-0.5" />
           <span>{validationError}</span>
         </div>
