@@ -6,6 +6,8 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 interface Props {
   glbUrl: string | null;
   loading?: boolean;
+  loadingMessage?: string;
+  errorMessage?: string | null;
   onError?: (msg: string) => void;
 }
 
@@ -16,9 +18,9 @@ function disposeMesh(mesh: THREE.Mesh) {
   else mat.dispose();
 }
 
-export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
+export default function Preview3D({ glbUrl, loading = false, loadingMessage = "Generating preview…", errorMessage, onError }: Props) {
   const ariaLabel = glbUrl
-    ? "3D terrain preview — model loaded"
+    ? "3D terrain preview — model loaded. Use mouse or touch to orbit, zoom, and pan."
     : loading
     ? "3D terrain preview — loading"
     : "3D terrain preview — no model loaded";
@@ -41,6 +43,7 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(el.clientWidth, el.clientHeight);
+    renderer.setClearColor(0x0d0d1a, 1); // matches CSS --bg; explicit clear avoids transparency flicker
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     el.appendChild(renderer.domElement);
@@ -61,13 +64,14 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
     fill.position.set(-60, 40, -80);
     scene.add(fill);
 
-    const grid = new THREE.GridHelper(400, 20, 0x3a3a5a, 0x2a2a48);
+    // Slightly brighter grid lines for better depth perception in dark scene
+    const grid = new THREE.GridHelper(400, 20, 0x4a4a72, 0x2e2e52);
     grid.position.y = -0.5;
     scene.add(grid);
     gridRef.current = grid;
 
     const camera = new THREE.PerspectiveCamera(45, el.clientWidth / el.clientHeight, 0.01, 10000);
-    camera.position.set(0, 150, 200);
+    camera.position.set(0, 80, 120); // closer default — model fills more of viewport
     cameraRef.current = camera;
 
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -171,7 +175,7 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
             mesh.material =
               child.name === "trail"
                 ? new THREE.MeshStandardMaterial({ color: 0xdc3232, roughness: 0.6, metalness: 0.1 })
-                : new THREE.MeshStandardMaterial({ color: 0xb8b8c0, roughness: 0.8, metalness: 0.05 });
+                : new THREE.MeshStandardMaterial({ color: 0xa8aab4, roughness: 0.65, metalness: 0.05 });
           }
         });
         group.add(gltf.scene);
@@ -206,6 +210,7 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div
         ref={mountRef}
+        tabIndex={0}
         style={{ width: "100%", height: "100%", touchAction: "none" }}
         aria-label={ariaLabel}
         role="img"
@@ -235,7 +240,7 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
         {loading ? (
           <>
             <span className="spinner" aria-hidden="true" />
-            Generating preview…
+            {loadingMessage}
           </>
         ) : glbUrl ? (
           "Preview ready"
@@ -243,6 +248,28 @@ export default function Preview3D({ glbUrl, loading = false, onError }: Props) {
           ""
         )}
       </div>
+      {/* Error overlay — anchored to bottom of canvas so orbit controls remain accessible */}
+      {errorMessage && !loading && (
+        <div
+          role="alert"
+          style={{
+            position: "absolute",
+            bottom: "0.75rem",
+            left: "0.75rem",
+            right: "0.75rem",
+            background: "rgba(239,68,68,0.15)",
+            border: "1px solid #ef4444",
+            color: "#f87171",
+            borderRadius: "8px",
+            padding: "0.5rem 0.75rem",
+            fontSize: "0.8rem",
+            lineHeight: 1.5,
+            pointerEvents: "none",
+          }}
+        >
+          {errorMessage}
+        </div>
+      )}
       {!glbUrl && !loading && (
         <div
           aria-hidden="true"

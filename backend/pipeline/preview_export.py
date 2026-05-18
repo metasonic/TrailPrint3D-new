@@ -31,11 +31,29 @@ def export_preview_glb(
 ) -> None:
     """
     Export terrain and optional trail to a single GLB file.
-    Applies Y-up rotation and assigns PBR materials.
+    Applies XY centering (so the terrain is centred at the world origin),
+    Y-up rotation, and PBR materials.
+
+    Centering is applied to both terrain and trail using the terrain's XY
+    bounding-box centre so that Three.js OrbitControls and camera setup can
+    assume the model is at the origin without further adjustment.
     """
     scene = trimesh.Scene()
 
-    terrain_yup = _apply_yup(terrain)
+    # Compute the XY centre of the terrain bounding box.
+    # Both terrain and trail share the same absolute Mercator coordinate space,
+    # so subtracting this single offset centres the entire scene.
+    t_min = terrain.vertices[:, :2].min(axis=0)
+    t_max = terrain.vertices[:, :2].max(axis=0)
+    xy_centre = (t_min + t_max) / 2.0
+
+    def _centre_and_yup(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+        verts = mesh.vertices.copy()
+        verts[:, :2] -= xy_centre
+        rotated = trimesh.transform_points(verts, _R_YUP)
+        return trimesh.Trimesh(vertices=rotated, faces=mesh.faces, process=False)
+
+    terrain_yup = _centre_and_yup(terrain)
     terrain_yup.visual = trimesh.visual.ColorVisuals(
         mesh=terrain_yup,
         vertex_colors=np.tile([180, 180, 180, 255], (len(terrain_yup.vertices), 1)),
@@ -43,7 +61,7 @@ def export_preview_glb(
     scene.add_geometry(terrain_yup, geom_name="terrain", node_name="terrain")
 
     if trail is not None and len(trail.vertices) > 0:
-        trail_yup = _apply_yup(trail)
+        trail_yup = _centre_and_yup(trail)
         trail_yup.visual = trimesh.visual.ColorVisuals(
             mesh=trail_yup,
             vertex_colors=np.tile([220, 50, 50, 255], (len(trail_yup.vertices), 1)),

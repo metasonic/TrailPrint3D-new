@@ -180,6 +180,11 @@ def export_model(
         if drain_thread.is_alive():
             proc.kill()
             drain_thread.join(timeout=5)
+            # Reap the killed process to avoid leaving a zombie in the OS process table.
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                pass
             _update_job(r, job_id, status="failed",
                         error=f"Generation timed out after {BLENDER_TIMEOUT}s")
             return {"status": "failed"}

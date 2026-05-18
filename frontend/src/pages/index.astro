@@ -6,7 +6,7 @@ import TrailPrintApp from "../components/TrailPrintApp";
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>TrailPrint3D — GPX to 3D Print</title>
   <meta name="description" content="Convert your GPS trail into a 3D-printable terrain map." />
   <link rel="icon" href="/favicon.ico" sizes="any" />
@@ -22,7 +22,7 @@ import TrailPrintApp from "../components/TrailPrintApp";
       --trail: #dc3232;
       --text: #e0e0f0;
       --muted: #8888a8;    /* lightened from #6b6b8a — contrast on --surface: ~5.5:1 ✓ */
-      --border: #2a2a4a;
+      --border: #676787;   /* lightened: 3.6:1 vs --surface — meets WCAG 1.4.11 UI boundary */
       --success: #15803d;  /* darkened from #22c55e — contrast with white: 5.0:1 ✓ */
       --error: #ef4444;
       --radius: 10px;
@@ -66,6 +66,8 @@ import TrailPrintApp from "../components/TrailPrintApp";
       border-right: 1px solid var(--border);
       overflow-y: auto;
       padding: 1rem;
+      /* Safe area inset for notch devices (no-op on desktop) */
+      padding-top: max(1rem, env(safe-area-inset-top));
       display: flex;
       flex-direction: column;
       gap: 0.75rem;
@@ -79,6 +81,10 @@ import TrailPrintApp from "../components/TrailPrintApp";
       background: var(--surface2);
       border-top: 1px solid var(--border);
       padding: 0.75rem 1.25rem;
+      /* Safe area insets for home indicator + landscape notch */
+      padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+      padding-left: max(1.25rem, env(safe-area-inset-left));
+      padding-right: max(1.25rem, env(safe-area-inset-right));
       display: flex;
       align-items: center;
       gap: 1rem;
@@ -96,7 +102,7 @@ import TrailPrintApp from "../components/TrailPrintApp";
       margin-bottom: 0.25rem;
     }
     .app-header h1 { font-size: 1.25rem; font-weight: 700; color: #60a5fa; /* blue-400: ~8:1 on --surface */ }
-    .app-header span { font-size: 0.8rem; color: var(--muted); /* 12px at 15px base — min legible */ }
+    .app-header span { font-size: 0.8rem; font-weight: 500; color: var(--muted); }
 
     /* Upload zone */
     .upload-zone {
@@ -113,8 +119,10 @@ import TrailPrintApp from "../components/TrailPrintApp";
       justify-content: center;
       gap: 0.4rem;
     }
-    .upload-zone:hover, .upload-zone.dragging { border-color: var(--accent); background: rgba(37,99,235,0.08); /* #2563eb @ 8% */ }
-    .upload-zone.has-file { border-style: solid; border-color: var(--success); }
+    .upload-zone:hover { border-color: var(--accent); background: rgba(37,99,235,0.05); }
+    .upload-zone.dragging { border-color: var(--accent); background: rgba(37,99,235,0.14); border-style: solid; }
+    .upload-zone.has-file { border-style: solid; border-color: var(--success); min-height: 80px; padding: 0.75rem 1rem; }
+    .upload-zone:focus-visible { outline-color: var(--text); }
     .upload-icon { width: 36px; height: 36px; color: var(--muted); }
     .upload-stats { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.85rem; }
     .upload-stats strong { color: #4ade80; /* green-400: ~7:1 on --surface */ }
@@ -127,7 +135,8 @@ import TrailPrintApp from "../components/TrailPrintApp";
       overflow: hidden;
     }
     .settings-group summary {
-      padding: 0.6rem 0.75rem;
+      padding: 0.75rem;
+      min-height: 44px;
       cursor: pointer;
       font-weight: 600;
       background: var(--surface2);
@@ -171,6 +180,8 @@ import TrailPrintApp from "../components/TrailPrintApp";
       gap: 0.5rem;
       color: var(--text);
       cursor: pointer;
+      min-height: 44px;
+      padding: 0.25rem 0;
     }
     .badge {
       margin-left: auto;
@@ -193,35 +204,47 @@ import TrailPrintApp from "../components/TrailPrintApp";
       font-weight: 600;
       cursor: pointer;
       width: 100%;
-      transition: opacity 0.15s;
+      min-height: 44px;
+      transition: background 0.15s;
     }
-    .btn-primary:hover { opacity: 0.85; }
-    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary:hover { background: #1d4ed8; /* blue-700: white contrast 7.3:1 ✓ */ }
+    .btn-primary:disabled { opacity: 0.65; cursor: not-allowed; }
+    .btn-primary:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
     /* Export Generate button overrides: auto width, matches btn-export height */
-    .btn-generate-export { width: auto; padding: 0.45rem 1rem; }
+    .btn-generate-export { width: auto; padding: 0.55rem 1.25rem; }
 
     /* Export buttons */
     .export-buttons { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-    .export-buttons > span { font-weight: 600; color: var(--muted); font-size: 0.8rem; }
+    .export-buttons > span { font-weight: 600; color: var(--text); font-size: 0.8rem; }
     .btn-export {
       background: var(--surface);
       border: 1px solid var(--border);
       color: var(--text);
       border-radius: 8px;
       padding: 0.45rem 1rem;
+      min-height: 44px;
       cursor: pointer;
       font-size: 0.85rem;
       font-weight: 600;
       transition: border-color 0.15s, background 0.15s;
     }
-    .btn-export.active, .btn-export:hover { border-color: var(--accent); background: rgba(37,99,235,0.12); /* #2563eb @ 12% */ }
+    /* Active (selected format) has stronger tint + inset indicator */
+    .btn-export.active {
+      border-color: var(--accent);
+      background: rgba(37,99,235,0.18);
+      box-shadow: inset 0 -2px 0 var(--accent);
+    }
+    /* Hover on non-active buttons: lighter tint */
+    .btn-export:hover:not(.active) { border-color: var(--accent); background: rgba(37,99,235,0.08); }
     .btn-export:disabled { opacity: 0.5; cursor: not-allowed; }
     .btn-download {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
       background: var(--success);
       color: #fff;
       border-radius: 8px;
       padding: 0.4rem 0.8rem;
+      min-height: 44px;
       text-decoration: none;
       font-size: 0.85rem;
       font-weight: 600;
@@ -236,12 +259,13 @@ import TrailPrintApp from "../components/TrailPrintApp";
 
     /* Job status */
     .job-status { display: flex; align-items: center; gap: 0.75rem; flex: 1; flex-wrap: wrap; }
-    .progress-bar { height: 6px; width: 160px; flex-shrink: 0; background: var(--border); border-radius: 3px; overflow: hidden; }
+    .progress-bar { height: 6px; min-width: 160px; flex: 1; max-width: 280px; flex-shrink: 0; background: #0f0f20; border-radius: 3px; overflow: hidden; }
     .progress-fill { height: 100%; border-radius: 3px; transition: width 0.3s; background: var(--accent); }
     .progress-fill.done { background: var(--success); }
     .progress-fill.failed { background: var(--error); }
     .progress-label { font-size: 0.8rem; color: var(--muted); }
-    .progress-label--error { color: var(--error); }
+    /* #f87171 (red-400): 5.98:1 on --surface2 — meets WCAG AA at 12px */
+    .progress-label--error { color: #f87171; }
 
     /* Error box */
     .error-box {
@@ -251,6 +275,7 @@ import TrailPrintApp from "../components/TrailPrintApp";
       border-radius: var(--radius);
       padding: 0.5rem 0.75rem;
       font-size: 0.8rem;
+      line-height: 1.5;
     }
 
     /* Spinner */
@@ -270,7 +295,12 @@ import TrailPrintApp from "../components/TrailPrintApp";
       .progress-fill { transition: none; }
     }
 
-    /* Responsive */
+    /* Tablet: tighten sidebar column so preview gets more room */
+    @media (min-width: 681px) and (max-width: 900px) {
+      .app-grid { grid-template-columns: 240px 1fr; }
+    }
+
+    /* Mobile (portrait) */
     @media (max-width: 680px) {
       .app-grid {
         grid-template-columns: 1fr;
@@ -287,7 +317,13 @@ import TrailPrintApp from "../components/TrailPrintApp";
       .export-buttons { flex-wrap: wrap; }
       .btn-export { flex: 1; text-align: center; }
       .btn-generate-export { flex: 1; }
-      .progress-bar { width: 100%; }
+      .progress-bar { max-width: none; }
+    }
+
+    /* Mobile landscape: shorter sidebar + tighter preview */
+    @media (max-width: 680px) and (orientation: landscape) {
+      .app-grid { grid-template-rows: auto min(40vh, 280px) auto; }
+      .sidebar { max-height: 35vh; }
     }
   </style>
 </head>

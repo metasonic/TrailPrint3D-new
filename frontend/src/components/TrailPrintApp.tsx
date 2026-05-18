@@ -68,17 +68,15 @@ export default function TrailPrintApp() {
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
   const [exportFormat, setExportFormat] = useState<"STL" | "OBJ" | "3MF">("STL");
 
-  // Debounce settings so slider drags don't fire a request on every tick
   const debouncedSettings = useDebounce(settings, 500);
 
   const previewAbortRef = useRef<AbortController | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Generation counter prevents orphaned intervals from a rapid double-click
   const exportGenRef = useRef(0);
-  // Track which fileId has already had its initial preview triggered
   const lastPreviewedFileIdRef = useRef<string | null>(null);
-  // React ref for the hidden file input (avoids getElementById)
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // For focus management after file upload
+  const firstSettingsRef = useRef<HTMLElement>(null);
 
   const handlePreview = useCallback(async (fid: string, s: GenerationSettings) => {
     previewAbortRef.current?.abort();
@@ -102,17 +100,13 @@ export default function TrailPrintApp() {
     }
   }, []);
 
-  // Auto-regenerate preview when debounced settings change — but skip the
-  // first trigger right after a new file is uploaded (handleFile already runs it).
   useEffect(() => {
     if (!fileId) return;
     if (fileId !== lastPreviewedFileIdRef.current) {
-      // New file — handleFile triggered the initial preview; just record it
       lastPreviewedFileIdRef.current = fileId;
       return;
     }
     handlePreview(fileId, debouncedSettings);
-  // handlePreview is stable (useCallback []); include it for exhaustive-deps correctness
   }, [debouncedSettings, fileId, handlePreview]);
 
   const clearPoll = useCallback(() => {
@@ -124,6 +118,7 @@ export default function TrailPrintApp() {
 
   const _startPolling = useCallback((job_id: string, gen: number) => {
     let pollAttempts = 0;
+    let consecutiveNetworkErrors = 0;
     pollRef.current = setInterval(async () => {
       if (gen !== exportGenRef.current) {
         clearInterval(pollRef.current ?? undefined);
@@ -138,6 +133,7 @@ export default function TrailPrintApp() {
       }
       try {
         const status = await getJobStatus(job_id);
+        consecutiveNetworkErrors = 0;
         setJobStatus(status);
         if (status.status === "done" || status.status === "failed") {
           clearPoll();
@@ -149,6 +145,7 @@ export default function TrailPrintApp() {
           sessionStorage.removeItem(SESSION_KEY);
           setJobStatus((s) => s ? { ...s, status: "failed", error: "Invalid server response" } : null);
         } else if (e instanceof PollError) {
+          consecutiveNetworkErrors = 0;
           if (e.status === 404) {
             clearPoll();
             sessionStorage.removeItem(SESSION_KEY);
@@ -157,21 +154,24 @@ export default function TrailPrintApp() {
             setJobStatus((s) => s && s.status !== "done" && s.status !== "failed"
               ? { ...s, message: "Server busy, retrying…" } : s);
           }
+        } else {
+          // Network failure (offline, DNS, etc.) — show message after 3 consecutive failures
+          consecutiveNetworkErrors++;
+          if (consecutiveNetworkErrors >= 3) {
+            setJobStatus((s) => s ? { ...s, message: "Connection lost — retrying…" } : s);
+          }
         }
       }
     }, 2000);
   }, [clearPoll]);
 
   const handleFile = useCallback(async (file: File) => {
-    // Cancel any in-flight export poll before starting fresh
     clearPoll();
     setUploadError(null);
     setPreviewError(null);
     setGlbUrl(null);
     setJobStatus(null);
     setFileId(null);
-    // Reset loading immediately — if a previous request was aborted its finally
-    // block won't fire setPreviewLoading(false), so we must reset it here.
     setPreviewLoading(false);
     previewAbortRef.current?.abort();
     setUploadLoading(true);
@@ -179,7 +179,8 @@ export default function TrailPrintApp() {
       const res = await uploadFile(file);
       setFileId(res.file_id);
       setTrackStats(res.track_stats);
-      // Trigger initial preview immediately (before debouncedSettings catches up)
+      // Shift keyboard focus to the first settings panel after controls appear
+      setTimeout(() => (firstSettingsRef.current as HTMLElement | null)?.focus(), 80);
       await handlePreview(res.file_id, settings);
     } catch (e: unknown) {
       setUploadError(e instanceof Error ? e.message : "Upload failed");
@@ -200,22 +201,13 @@ export default function TrailPrintApp() {
   const handleExport = useCallback(async (fmt: "STL" | "OBJ" | "3MF") => {
     if (!fileId) return;
     clearPoll();
-
-    // Increment generation counter — any interval from a previous click will
-    // see the mismatch and self-terminate rather than clearing the new interval.
     const gen = ++exportGenRef.current;
-
     setJobStatus({ job_id: "", status: "pending", progress: 0, message: "Starting…", files: [] });
     try {
       const { job_id } = await startExport(fileId, settings, fmt);
-
-      // Bail if a newer export click superseded this one while awaiting
       if (gen !== exportGenRef.current) return;
-
       setJobStatus((s) => (s ? { ...s, job_id } : null));
-      // Persist job for recovery after page refresh
       sessionStorage.setItem(SESSION_KEY, JSON.stringify({ job_id, format: fmt }));
-
       _startPolling(job_id, gen);
     } catch (e: unknown) {
       if (gen !== exportGenRef.current) return;
@@ -230,7 +222,7 @@ export default function TrailPrintApp() {
     }
   }, [fileId, settings, clearPoll, _startPolling]);
 
-  // Resume polling if user refreshed during an export
+  // Resume polling after page refresh
   useEffect(() => {
     const saved = sessionStorage.getItem(SESSION_KEY);
     if (!saved) return;
@@ -246,7 +238,6 @@ export default function TrailPrintApp() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Cleanup on unmount
   useEffect(() => () => {
     clearPoll();
     previewAbortRef.current?.abort();
@@ -272,16 +263,16 @@ export default function TrailPrintApp() {
       {/* ── Left panel ── */}
       <aside className="sidebar">
         <header className="app-header">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" style={{ color: "#60a5fa" }}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true" style={{ color: "#60a5fa" }}>
             <path d="M3 17l4-8 4 4 3-6 4 8" />
-            <rect x="2" y="19" width="20" height="2" rx="1" fill="currentColor" stroke="none" />
+            <rect x="2" y="18" width="20" height="2.5" rx="1" fill="currentColor" stroke="none" />
           </svg>
           <h1>TrailPrint3D</h1>
-          <span>GPX → 3D Print</span>
+          <span>GPX ▸ 3D Print</span>
         </header>
 
         {/* Upload zone */}
-        <section
+        <div
           className={`upload-zone${isDragging ? " dragging" : ""}${fileId ? " has-file" : ""}`}
           onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
           onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragging(false); }}
@@ -303,7 +294,16 @@ export default function TrailPrintApp() {
             type="file"
             accept=".gpx,.igc"
             style={{ display: "none" }}
-            onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (!f) return;
+              const ext = f.name.split(".").pop()?.toLowerCase();
+              if (ext !== "gpx" && ext !== "igc") {
+                setUploadError("Only .gpx and .igc files are accepted");
+                return;
+              }
+              handleFile(f);
+            }}
           />
           {uploadLoading ? (
             <>
@@ -328,15 +328,15 @@ export default function TrailPrintApp() {
               <p className="muted">or click to browse</p>
             </>
           )}
-        </section>
+        </div>
         {uploadError && (
-          <div className="error-box" role="alert" aria-live="assertive">{uploadError}</div>
+          <div className="error-box" role="alert">{uploadError}</div>
         )}
 
-        {/* Settings */}
+        {/* Settings — only rendered once a file is loaded */}
         {fileId && (
           <>
-            <details open className="settings-group">
+            <details className="settings-group" ref={firstSettingsRef as any} tabIndex={-1}>
               <summary>Trail Name</summary>
               <label htmlFor="trail-name">
                 Name
@@ -350,7 +350,6 @@ export default function TrailPrintApp() {
                   value={settings.trail_name ?? ""}
                   onChange={(e) => {
                     const v = e.target.value;
-                    // Silently strip characters the backend pattern rejects
                     updateSetting("trail_name", v.replace(/[^a-zA-Z0-9 _\-\.]/g, ""));
                   }}
                 />
@@ -396,7 +395,7 @@ export default function TrailPrintApp() {
               </label>
             </details>
 
-            <details open className="settings-group">
+            <details className="settings-group">
               <summary>Terrain</summary>
               <label htmlFor="elev-scale">Elevation Scale
                 <input id="elev-scale" type="number" min={0} max={100} step={0.1} value={settings.elevation_scale}
@@ -408,7 +407,7 @@ export default function TrailPrintApp() {
                 <span style={{ fontVariantNumeric: "tabular-nums" }}>{settings.num_subdivisions}</span>
               </label>
               <p className="muted" style={{ fontSize: "0.8rem" }}>
-                {(settings.num_subdivisions ?? 4) > 4 ? "Resolution > 4 renders at full detail in export only." : "Higher resolution increases generation time."}
+                {(settings.num_subdivisions ?? 4) > 4 ? "Resolution > 4 uses full detail in export only." : "Higher values increase generation time."}
               </p>
               <label htmlFor="min-thick">Min Thickness (mm)
                 <input id="min-thick" type="number" min={0.5} max={50} step={0.5} value={settings.min_thickness}
@@ -456,14 +455,15 @@ export default function TrailPrintApp() {
                 onChange={(e) => updateSetting("roads_big", e.target.checked)} /> Major Roads</label>
               <label><input type="checkbox" checked={settings.roads_med}
                 onChange={(e) => updateSetting("roads_med", e.target.checked)} /> Secondary Roads</label>
+              <label><input type="checkbox" checked={settings.roads_small}
+                onChange={(e) => updateSetting("roads_small", e.target.checked)} /> Small Roads</label>
             </details>
 
-            <button type="button" className="btn-primary btn-generate" onClick={handleRegenerate} disabled={previewLoading}>
-              {previewLoading ? "Generating…" : "↻ Regenerate Preview"}
+            <button type="button" className="btn-primary" onClick={handleRegenerate} disabled={previewLoading}>
+              {previewLoading
+                ? "Generating…"
+                : <><span aria-hidden="true">↻ </span>Regenerate Preview</>}
             </button>
-            {previewError && (
-              <div className="error-box" role="alert" aria-live="assertive">{previewError}</div>
-            )}
           </>
         )}
       </aside>
@@ -473,35 +473,39 @@ export default function TrailPrintApp() {
         <Preview3D
           glbUrl={glbUrl}
           loading={previewLoading || uploadLoading}
+          loadingMessage={uploadLoading ? "Uploading file…" : "Generating preview…"}
+          errorMessage={previewError}
           onError={(msg) => setPreviewError(msg)}
         />
       </section>
 
-      {/* ── Download panel ── */}
-      {fileId && (
+      {/* ── Download panel — visible when file loaded OR when a job exists after refresh ── */}
+      {(fileId || jobStatus) && (
         <footer className="download-panel">
-          <div className="export-buttons" role="group" aria-label="Export format and trigger">
-            <span>Format:</span>
-            {(["STL", "OBJ", "3MF"] as const).map((fmt) => (
+          {fileId && (
+            <div className="export-buttons" role="group" aria-label="Export format and trigger">
+              <span>Format:</span>
+              {(["STL", "OBJ", "3MF"] as const).map((fmt) => (
+                <button
+                  key={fmt}
+                  type="button"
+                  className={`btn-export${exportFormat === fmt ? " active" : ""}`}
+                  onClick={() => setExportFormat(fmt)}
+                  aria-pressed={exportFormat === fmt}
+                >
+                  {fmt}
+                </button>
+              ))}
               <button
-                key={fmt}
                 type="button"
-                className={`btn-export${exportFormat === fmt ? " active" : ""}`}
-                onClick={() => setExportFormat(fmt)}
-                aria-pressed={exportFormat === fmt}
+                className="btn-primary btn-generate-export"
+                onClick={() => handleExport(exportFormat)}
+                disabled={isExporting}
               >
-                {fmt}
+                Generate {exportFormat}
               </button>
-            ))}
-            <button
-              type="button"
-              className="btn-primary btn-generate-export"
-              onClick={() => handleExport(exportFormat)}
-              disabled={isExporting}
-            >
-              Generate {exportFormat}
-            </button>
-          </div>
+            </div>
+          )}
 
           {jobStatus && (
             <div className="job-status" role="status" aria-live="polite" aria-atomic="true">
@@ -513,11 +517,9 @@ export default function TrailPrintApp() {
                 aria-valuemax={100}
                 aria-valuenow={jobStatus.progress}
                 aria-valuetext={
-                  jobStatus.status === "done"
-                    ? "Complete"
-                    : jobStatus.status === "failed"
-                    ? "Failed"
-                    : `${jobStatus.progress}%`
+                  jobStatus.status === "done" ? "Complete"
+                  : jobStatus.status === "failed" ? "Failed"
+                  : `${jobStatus.progress}%`
                 }
               >
                 <div
@@ -534,13 +536,13 @@ export default function TrailPrintApp() {
               </span>
               {jobStatus.status === "failed" && (
                 <button type="button" className="btn-export" onClick={() => handleExport(exportFormat)}>
-                  ↺ Retry
+                  <span aria-hidden="true">↺ </span>Retry
                 </button>
               )}
               {jobStatus.status === "done" &&
                 jobStatus.files.map((f) => (
                   <a key={f} href={downloadUrl(jobStatus.job_id, f)} download={f} className="btn-download">
-                    ↓ {f}
+                    <span aria-hidden="true">↓ </span>{f}
                   </a>
                 ))}
             </div>
