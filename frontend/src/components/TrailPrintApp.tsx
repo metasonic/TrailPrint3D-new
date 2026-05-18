@@ -45,6 +45,7 @@ const DEFAULT_SETTINGS: GenerationSettings = {
 
 const MAX_POLL_ATTEMPTS = 300; // 10 minutes at 2 s interval
 const SESSION_KEY = "tp3d_job";
+const EXPORT_FORMATS = ["STL", "OBJ", "3MF"] as const;
 
 function useDebounce<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -75,8 +76,8 @@ export default function TrailPrintApp() {
   const exportGenRef = useRef(0);
   const lastPreviewedFileIdRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // For focus management after file upload
-  const firstSettingsRef = useRef<HTMLElement>(null);
+  // Focus target after file upload: first summary in settings (naturally focusable, no tabIndex needed)
+  const firstSummaryRef = useRef<HTMLElement>(null);
 
   const handlePreview = useCallback(async (fid: string, s: GenerationSettings) => {
     previewAbortRef.current?.abort();
@@ -179,8 +180,8 @@ export default function TrailPrintApp() {
       const res = await uploadFile(file);
       setFileId(res.file_id);
       setTrackStats(res.track_stats);
-      // Shift keyboard focus to the first settings panel after controls appear
-      setTimeout(() => (firstSettingsRef.current as HTMLElement | null)?.focus(), 80);
+      // Shift keyboard focus to the first settings summary after controls appear
+      setTimeout(() => firstSummaryRef.current?.focus(), 80);
       await handlePreview(res.file_id, settings);
     } catch (e: unknown) {
       setUploadError(e instanceof Error ? e.message : "Upload failed");
@@ -250,13 +251,30 @@ export default function TrailPrintApp() {
     if (!f) return;
     const ext = f.name.split(".").pop()?.toLowerCase();
     if (ext !== "gpx" && ext !== "igc") {
-      setUploadError("Only .gpx and .igc files are accepted");
+      setUploadError(`Only .gpx and .igc files are accepted. You selected: ${f.name}`);
       return;
     }
     handleFile(f);
   };
 
   const isExporting = jobStatus?.status === "running" || jobStatus?.status === "pending";
+
+  // Roving tabIndex + arrow-key navigation for the export format radio group
+  const handleFormatKeyDown = (e: React.KeyboardEvent, fmt: typeof EXPORT_FORMATS[number]) => {
+    const idx = EXPORT_FORMATS.indexOf(fmt);
+    let next: typeof EXPORT_FORMATS[number] | undefined;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+      e.preventDefault();
+      next = EXPORT_FORMATS[(idx + 1) % EXPORT_FORMATS.length];
+    } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+      e.preventDefault();
+      next = EXPORT_FORMATS[(idx - 1 + EXPORT_FORMATS.length) % EXPORT_FORMATS.length];
+    }
+    if (next) {
+      setExportFormat(next);
+      document.getElementById(`fmt-${next}`)?.focus();
+    }
+  };
 
   return (
     <div className="app-grid">
@@ -271,35 +289,29 @@ export default function TrailPrintApp() {
           <span>GPX ▸ 3D Print</span>
         </header>
 
-        {/* Upload zone */}
-        <div
+        {/* Upload zone — <label> wrapping a visually-hidden input gives native
+            file-dialog activation across all browsers and assistive technologies,
+            without relying on scripted .click() on a display:none element. */}
+        <label
+          htmlFor="file-input"
           className={`upload-zone${isDragging ? " dragging" : ""}${fileId ? " has-file" : ""}`}
           onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
           onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragging(false); }}
           onDrop={onDrop}
-          onClick={() => fileInputRef.current?.click()}
-          role="button"
-          tabIndex={0}
-          aria-label="Drop a GPX or IGC file here, or press Enter or Space to browse"
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              fileInputRef.current?.click();
-            }
-          }}
+          aria-label="Drop a GPX or IGC file here, or press Enter to browse"
         >
           <input
             ref={fileInputRef}
             id="file-input"
             type="file"
             accept=".gpx,.igc"
-            style={{ display: "none" }}
+            className="sr-only"
             onChange={(e) => {
               const f = e.target.files?.[0];
               if (!f) return;
               const ext = f.name.split(".").pop()?.toLowerCase();
               if (ext !== "gpx" && ext !== "igc") {
-                setUploadError("Only .gpx and .igc files are accepted");
+                setUploadError(`Only .gpx and .igc files are accepted. You selected: ${f.name}`);
                 return;
               }
               handleFile(f);
@@ -312,7 +324,7 @@ export default function TrailPrintApp() {
             </>
           ) : fileId && trackStats ? (
             <div className="upload-stats">
-              <strong>✓ Track loaded</strong>
+              <strong><span aria-hidden="true">✓ </span>Track loaded</strong>
               <span>{trackStats.length_km.toFixed(1)} km · +{trackStats.elevation_gain_m.toFixed(0)} m</span>
               {trackStats.date && <span>{trackStats.date}</span>}
               <span className="muted">{trackStats.point_count.toLocaleString()} points</span>
@@ -328,7 +340,7 @@ export default function TrailPrintApp() {
               <p className="muted">or click to browse</p>
             </>
           )}
-        </div>
+        </label>
         {uploadError && (
           <div className="error-box" role="alert">{uploadError}</div>
         )}
@@ -336,8 +348,8 @@ export default function TrailPrintApp() {
         {/* Settings — only rendered once a file is loaded */}
         {fileId && (
           <>
-            <details className="settings-group" ref={firstSettingsRef as any} tabIndex={-1}>
-              <summary>Trail Name</summary>
+            <details className="settings-group">
+              <summary ref={firstSummaryRef as any}>Trail Name</summary>
               <label htmlFor="trail-name">
                 Name
                 <input
@@ -345,8 +357,7 @@ export default function TrailPrintApp() {
                   type="text"
                   maxLength={100}
                   placeholder="e.g. Mont Blanc Tour"
-                  inputMode="text"
-                  autoComplete="off"
+                  autoComplete="on"
                   value={settings.trail_name ?? ""}
                   onChange={(e) => {
                     const v = e.target.value;
@@ -373,13 +384,13 @@ export default function TrailPrintApp() {
                 </select>
               </label>
               <label htmlFor="size-mm">Size (mm)
-                <input id="size-mm" type="number" min={5} max={10000} value={settings.obj_size_mm}
-                  onChange={(e) => updateSetting("obj_size_mm", +e.target.value)} />
+                <input id="size-mm" type="number" min={5} max={10000} step={1} value={settings.obj_size_mm}
+                  onChange={(e) => updateSetting("obj_size_mm", Math.max(5, Math.min(10000, +e.target.value || 100)))} />
               </label>
               {settings.shape === "SQUARE" && (
                 <label htmlFor="rect-height">Rectangle Height (mm)
-                  <input id="rect-height" type="number" min={5} max={10000} value={settings.rectangle_height ?? 100}
-                    onChange={(e) => updateSetting("rectangle_height", +e.target.value)} />
+                  <input id="rect-height" type="number" min={5} max={10000} step={1} value={settings.rectangle_height ?? 100}
+                    onChange={(e) => updateSetting("rectangle_height", Math.max(5, Math.min(10000, +e.target.value || 100)))} />
                 </label>
               )}
               {settings.shape === "ELLIPSE" && (
@@ -389,8 +400,14 @@ export default function TrailPrintApp() {
                 </label>
               )}
               <label htmlFor="rotation-range">Rotation (°)
-                <input id="rotation-range" type="range" min={-180} max={180} value={settings.shape_rotation ?? 0}
-                  onChange={(e) => updateSetting("shape_rotation", +e.target.value || 0)} />
+                <input
+                  id="rotation-range"
+                  type="range"
+                  min={-180} max={180}
+                  value={settings.shape_rotation ?? 0}
+                  aria-valuetext={`${settings.shape_rotation ?? 0} degrees`}
+                  onChange={(e) => updateSetting("shape_rotation", +e.target.value || 0)}
+                />
                 <span style={{ fontVariantNumeric: "tabular-nums" }}>{settings.shape_rotation ?? 0}°</span>
               </label>
             </details>
@@ -398,12 +415,18 @@ export default function TrailPrintApp() {
             <details className="settings-group">
               <summary>Terrain</summary>
               <label htmlFor="elev-scale">Elevation Scale
-                <input id="elev-scale" type="number" min={0} max={100} step={0.1} value={settings.elevation_scale}
-                  onChange={(e) => updateSetting("elevation_scale", +e.target.value)} />
+                <input id="elev-scale" type="number" min={0.01} max={100} step={0.1} value={settings.elevation_scale}
+                  onChange={(e) => updateSetting("elevation_scale", Math.max(0.01, +e.target.value))} />
               </label>
               <label htmlFor="resolution-range">Resolution (1–8)
-                <input id="resolution-range" type="range" min={1} max={8} value={settings.num_subdivisions}
-                  onChange={(e) => updateSetting("num_subdivisions", +e.target.value)} />
+                <input
+                  id="resolution-range"
+                  type="range"
+                  min={1} max={8}
+                  value={settings.num_subdivisions}
+                  aria-valuetext={`${settings.num_subdivisions} subdivisions`}
+                  onChange={(e) => updateSetting("num_subdivisions", +e.target.value)}
+                />
                 <span style={{ fontVariantNumeric: "tabular-nums" }}>{settings.num_subdivisions}</span>
               </label>
               <p className="muted" style={{ fontSize: "0.8rem" }}>
@@ -441,25 +464,57 @@ export default function TrailPrintApp() {
 
             <details className="settings-group">
               <summary>OSM Layers <span className="badge">+30–60s</span></summary>
-              <label><input type="checkbox" checked={settings.water_ponds}
-                onChange={(e) => updateSetting("water_ponds", e.target.checked)} /> Ponds &amp; Lakes</label>
-              <label><input type="checkbox" checked={settings.water_small_rivers}
-                onChange={(e) => updateSetting("water_small_rivers", e.target.checked)} /> Small Rivers</label>
-              <label><input type="checkbox" checked={settings.water_big_rivers}
-                onChange={(e) => updateSetting("water_big_rivers", e.target.checked)} /> Big Rivers</label>
-              <label><input type="checkbox" checked={settings.include_forests}
-                onChange={(e) => updateSetting("include_forests", e.target.checked)} /> Forests</label>
-              <label><input type="checkbox" checked={settings.include_buildings}
-                onChange={(e) => updateSetting("include_buildings", e.target.checked)} /> Buildings</label>
-              <label><input type="checkbox" checked={settings.roads_big}
-                onChange={(e) => updateSetting("roads_big", e.target.checked)} /> Major Roads</label>
-              <label><input type="checkbox" checked={settings.roads_med}
-                onChange={(e) => updateSetting("roads_med", e.target.checked)} /> Secondary Roads</label>
-              <label><input type="checkbox" checked={settings.roads_small}
-                onChange={(e) => updateSetting("roads_small", e.target.checked)} /> Small Roads</label>
+              <label htmlFor="osm-ponds">
+                <input id="osm-ponds" type="checkbox" checked={settings.water_ponds}
+                  onChange={(e) => updateSetting("water_ponds", e.target.checked)} />
+                Ponds &amp; Lakes
+              </label>
+              <label htmlFor="osm-small-rivers">
+                <input id="osm-small-rivers" type="checkbox" checked={settings.water_small_rivers}
+                  onChange={(e) => updateSetting("water_small_rivers", e.target.checked)} />
+                Small Rivers
+              </label>
+              <label htmlFor="osm-big-rivers">
+                <input id="osm-big-rivers" type="checkbox" checked={settings.water_big_rivers}
+                  onChange={(e) => updateSetting("water_big_rivers", e.target.checked)} />
+                Big Rivers
+              </label>
+              <label htmlFor="osm-forests">
+                <input id="osm-forests" type="checkbox" checked={settings.include_forests}
+                  onChange={(e) => updateSetting("include_forests", e.target.checked)} />
+                Forests
+              </label>
+              <label htmlFor="osm-buildings">
+                <input id="osm-buildings" type="checkbox" checked={settings.include_buildings}
+                  onChange={(e) => updateSetting("include_buildings", e.target.checked)} />
+                Buildings
+              </label>
+              <label htmlFor="osm-roads-big">
+                <input id="osm-roads-big" type="checkbox" checked={settings.roads_big}
+                  onChange={(e) => updateSetting("roads_big", e.target.checked)} />
+                Major Roads
+              </label>
+              <label htmlFor="osm-roads-med">
+                <input id="osm-roads-med" type="checkbox" checked={settings.roads_med}
+                  onChange={(e) => updateSetting("roads_med", e.target.checked)} />
+                Secondary Roads
+              </label>
+              <label htmlFor="osm-roads-small">
+                <input id="osm-roads-small" type="checkbox" checked={settings.roads_small}
+                  onChange={(e) => updateSetting("roads_small", e.target.checked)} />
+                Small Roads
+              </label>
             </details>
 
-            <button type="button" className="btn-primary" onClick={handleRegenerate} disabled={previewLoading}>
+            {/* aria-disabled keeps the button in tab order so screen readers hear
+                the "Generating…" label change; disabled would silently remove focus. */}
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={previewLoading ? undefined : handleRegenerate}
+              aria-disabled={previewLoading}
+              style={previewLoading ? { opacity: 0.65, cursor: "not-allowed" } : undefined}
+            >
               {previewLoading
                 ? "Generating…"
                 : <><span aria-hidden="true">↻ </span>Regenerate Preview</>}
@@ -483,32 +538,47 @@ export default function TrailPrintApp() {
       {(fileId || jobStatus) && (
         <footer className="download-panel">
           {fileId && (
-            <div className="export-buttons" role="group" aria-label="Export format and trigger">
-              <span>Format:</span>
-              {(["STL", "OBJ", "3MF"] as const).map((fmt) => (
-                <button
-                  key={fmt}
-                  type="button"
-                  className={`btn-export${exportFormat === fmt ? " active" : ""}`}
-                  onClick={() => setExportFormat(fmt)}
-                  aria-pressed={exportFormat === fmt}
-                >
-                  {fmt}
-                </button>
-              ))}
+            <div className="export-buttons">
+              {/* role="radiogroup" + role="radio" communicates mutual exclusivity to AT;
+                  roving tabIndex + arrow-key handler provides standard radio keyboard UX. */}
+              <div
+                role="radiogroup"
+                aria-label="Export format"
+                style={{ display: "contents" }}
+              >
+                {EXPORT_FORMATS.map((fmt) => (
+                  <button
+                    key={fmt}
+                    id={`fmt-${fmt}`}
+                    type="button"
+                    role="radio"
+                    aria-checked={exportFormat === fmt}
+                    className={`btn-export${exportFormat === fmt ? " active" : ""}`}
+                    tabIndex={exportFormat === fmt ? 0 : -1}
+                    onClick={() => setExportFormat(fmt)}
+                    onKeyDown={(e) => handleFormatKeyDown(e, fmt)}
+                  >
+                    {fmt}
+                  </button>
+                ))}
+              </div>
               <button
                 type="button"
                 className="btn-primary btn-generate-export"
-                onClick={() => handleExport(exportFormat)}
-                disabled={isExporting}
+                onClick={isExporting ? undefined : () => handleExport(exportFormat)}
+                aria-disabled={isExporting}
+                aria-busy={isExporting}
+                style={isExporting ? { opacity: 0.65, cursor: "not-allowed" } : undefined}
               >
-                Generate {exportFormat}
+                {isExporting ? "Exporting…" : `Generate ${exportFormat}`}
               </button>
             </div>
           )}
 
           {jobStatus && (
-            <div className="job-status" role="status" aria-live="polite" aria-atomic="true">
+            // aria-atomic="false" prevents the entire status block being re-read on every
+            // 2-second poll update; individual child elements carry their own live semantics.
+            <div className="job-status" role="status" aria-live="polite" aria-atomic="false">
               <div
                 className="progress-bar"
                 role="progressbar"
@@ -529,9 +599,9 @@ export default function TrailPrintApp() {
               </div>
               <span className={`progress-label${jobStatus.status === "failed" ? " progress-label--error" : ""}`}>
                 {jobStatus.status === "done"
-                  ? "✓ Ready to download"
+                  ? <><span aria-hidden="true">✓ </span>Ready to download</>
                   : jobStatus.status === "failed"
-                  ? `✗ ${jobStatus.error ?? "Export failed"}`
+                  ? <><span aria-hidden="true">✗ </span>{jobStatus.error ?? "Export failed"}</>
                   : `${jobStatus.message || jobStatus.status} — ${jobStatus.progress}%`}
               </span>
               {jobStatus.status === "failed" && (
@@ -541,8 +611,14 @@ export default function TrailPrintApp() {
               )}
               {jobStatus.status === "done" &&
                 jobStatus.files.map((f) => (
-                  <a key={f} href={downloadUrl(jobStatus.job_id, f)} download={f} className="btn-download">
-                    <span aria-hidden="true">↓ </span>{f}
+                  <a
+                    key={f}
+                    href={downloadUrl(jobStatus.job_id, f)}
+                    download={f}
+                    className="btn-download"
+                    title={f}
+                  >
+                    <span aria-hidden="true">↓</span>{f}
                   </a>
                 ))}
             </div>

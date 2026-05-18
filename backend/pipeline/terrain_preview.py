@@ -202,10 +202,12 @@ def _octagon_inside(vx: np.ndarray, vy: np.ndarray, r: float) -> np.ndarray:
 
 
 def _heart_inside(vx: np.ndarray, vy: np.ndarray, r: float) -> np.ndarray:
-    # Normalize to [-1, 1]
-    x = vx / r
-    y = vy / r
-    # Heart curve: (x^2 + y^2 - 1)^3 - x^2 * y^3 <= 0  (Cartesian heart)
+    # The Cartesian heart curve (x²+y²-1)³ - x²y³ ≤ 0 has a maximum radial
+    # extent of ~1.139 at ±45° (not 1.0). Normalise by this factor so the
+    # actual physical extent equals the declared radius r.
+    _HEART_SCALE = 1.139
+    x = vx / (r * _HEART_SCALE)
+    y = vy / (r * _HEART_SCALE)
     val = (x ** 2 + y ** 2 - 1) ** 3 - x ** 2 * y ** 3
     return val <= 0
 

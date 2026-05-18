@@ -33,6 +33,7 @@ class ElevationConfig:
     cache_dir: Path = Path("/app/.cache")
     disable_cache: bool = False
     num_subdivisions: int = 4
+    elevation_cache_size: int = 50000
     # bbox needed for terrain-tiles zoom calculation
     min_lat: float = 0.0
     min_lon: float = 0.0
@@ -80,7 +81,7 @@ def _save_cache(config: ElevationConfig) -> None:
     p = config.elevation_cache_file
     p.parent.mkdir(parents=True, exist_ok=True)
     with _cache_lock:
-        max_size = 50000
+        max_size = config.elevation_cache_size
         if len(_cache) > max_size:
             keys = list(_cache.keys())
             for k in keys[:-max_size]:
@@ -170,6 +171,11 @@ def _parse_png_rgb(png_bytes: bytes) -> list[list[tuple[int, int, int]]]:
                     f"Unsupported PNG format: bit_depth={bit_depth}, color_type={color_type}"
                     " (expected 8-bit RGB or RGBA)"
                 )
+            # Byte 12 of IHDR data is the interlace method; Adam7-interlaced tiles
+            # have a completely different data layout and would silently produce
+            # garbage elevation values if decoded as non-interlaced.
+            if len(data) > 12 and data[12] != 0:
+                raise ValueError(f"Interlaced PNG tiles are not supported (interlace={data[12]})")
         elif chunk == b"IDAT":
             idat += data
         elif chunk == b"IEND":
@@ -252,7 +258,9 @@ def get_elevation_terrain_tiles(
     vert_dist = realdist / hor_verts if hor_verts else realdist
 
     zoom = 2
-    tile_m_per_px = 156543.0
+    # Initialise to the actual resolution at zoom 2 (156543 / 2^zoom) so the
+    # loop selects the optimal zoom without fetching 4× extra tiles.
+    tile_m_per_px = 156543.0 / (2 ** zoom)
     while tile_m_per_px > vert_dist and zoom < 15:
         zoom += 1
         tile_m_per_px /= 2

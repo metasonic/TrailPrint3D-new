@@ -20,7 +20,7 @@ function disposeMesh(mesh: THREE.Mesh) {
 
 export default function Preview3D({ glbUrl, loading = false, loadingMessage = "Generating preview…", errorMessage, onError }: Props) {
   const ariaLabel = glbUrl
-    ? "3D terrain preview — model loaded. Use mouse or touch to orbit, zoom, and pan."
+    ? "Interactive 3D terrain preview. Use mouse drag or arrow keys to orbit, scroll to zoom, right-click to pan."
     : loading
     ? "3D terrain preview — loading"
     : "3D terrain preview — no model loaded";
@@ -43,7 +43,7 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(el.clientWidth, el.clientHeight);
-    renderer.setClearColor(0x0d0d1a, 1); // matches CSS --bg; explicit clear avoids transparency flicker
+    renderer.setClearColor(0x0d0d1a, 1); // explicit clear avoids transparency flicker on canvas resize
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     el.appendChild(renderer.domElement);
@@ -51,27 +51,30 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0d0d1a); // matches CSS --bg
+    // Fog gracefully fades the grid edges into the background instead of hard-terminating
+    scene.fog = new THREE.Fog(0x0d0d1a, 250, 550);
     sceneRef.current = scene;
 
-    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    // Reduced ambient (0.35) preserves shadow contrast for terrain depth reading
+    const ambient = new THREE.AmbientLight(0xffffff, 0.35);
     scene.add(ambient);
     const sun = new THREE.DirectionalLight(0xfff8e0, 1.4);
     sun.position.set(80, 120, 60);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     scene.add(sun);
-    const fill = new THREE.DirectionalLight(0xc0d8ff, 0.4);
+    // Clearer cool-blue fill separates shadow faces from the background
+    const fill = new THREE.DirectionalLight(0x8ab4e8, 0.4);
     fill.position.set(-60, 40, -80);
     scene.add(fill);
 
-    // Slightly brighter grid lines for better depth perception in dark scene
     const grid = new THREE.GridHelper(400, 20, 0x4a4a72, 0x2e2e52);
     grid.position.y = -0.5;
     scene.add(grid);
     gridRef.current = grid;
 
     const camera = new THREE.PerspectiveCamera(45, el.clientWidth / el.clientHeight, 0.01, 10000);
-    camera.position.set(0, 80, 120); // closer default — model fills more of viewport
+    camera.position.set(0, 80, 120);
     cameraRef.current = camera;
 
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -104,14 +107,12 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
       cancelAnimationFrame(animId);
       ro.disconnect();
       controls.dispose();
-      // Dispose any currently loaded model
       if (modelGroupRef.current) {
         modelGroupRef.current.traverse((child) => {
           if ((child as THREE.Mesh).isMesh) disposeMesh(child as THREE.Mesh);
         });
         modelGroupRef.current = null;
       }
-      // Dispose grid helper resources
       if (gridRef.current) {
         (gridRef.current.geometry as THREE.BufferGeometry).dispose();
         const mat = gridRef.current.material;
@@ -128,8 +129,6 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
   useEffect(() => {
     if (!sceneRef.current || !cameraRef.current || !controlsRef.current) return;
 
-    // Dispose old model fully — geometry, assigned materials, and any original
-    // GLTF materials that were overwritten without disposal.
     if (modelGroupRef.current) {
       modelGroupRef.current.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) disposeMesh(child as THREE.Mesh);
@@ -140,8 +139,7 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
 
     if (!glbUrl) return;
 
-    // Cancellation flag: if glbUrl changes before this load completes, ignore
-    // the stale success callback to prevent duplicate scene objects.
+    // Cancellation flag: if glbUrl changes before this load completes, ignore the stale callback
     let cancelled = false;
 
     const loader = new GLTFLoader();
@@ -149,7 +147,6 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
       glbUrl,
       (gltf) => {
         if (cancelled) {
-          // Dispose resources from the stale load to avoid leaks
           gltf.scene.traverse((child) => {
             if ((child as THREE.Mesh).isMesh) {
               const mesh = child as THREE.Mesh;
@@ -168,13 +165,13 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
             const mesh = child as THREE.Mesh;
             mesh.castShadow = true;
             mesh.receiveShadow = true;
-            // Dispose the original GLTF material before replacing it
             const origMat = mesh.material;
             if (Array.isArray(origMat)) origMat.forEach((m) => m.dispose());
             else origMat.dispose();
             mesh.material =
               child.name === "trail"
-                ? new THREE.MeshStandardMaterial({ color: 0xdc3232, roughness: 0.6, metalness: 0.1 })
+                // Slightly metallic trail pops against the matte terrain
+                ? new THREE.MeshStandardMaterial({ color: 0xdc3232, roughness: 0.45, metalness: 0.2 })
                 : new THREE.MeshStandardMaterial({ color: 0xa8aab4, roughness: 0.65, metalness: 0.05 });
           }
         });
@@ -189,7 +186,6 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
 
         controlsRef.current!.target.copy(center);
         cameraRef.current!.position.set(center.x, center.y + maxDim * 0.8, center.z + maxDim * 1.2);
-        // Only update projection matrix if aspect ratio changed, not on position moves
         cameraRef.current!.updateProjectionMatrix();
         controlsRef.current!.update();
       },
@@ -211,11 +207,11 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
       <div
         ref={mountRef}
         tabIndex={0}
-        style={{ width: "100%", height: "100%", touchAction: "none" }}
+        role="application"
         aria-label={ariaLabel}
-        role="img"
+        style={{ width: "100%", height: "100%", touchAction: "none" }}
       />
-      {/* Persistent live region for loading announcements — always in DOM so NVDA/JAWS pick up changes */}
+      {/* Persistent live region — always in DOM so NVDA/JAWS pick up text changes */}
       <div
         role="status"
         aria-live="polite"
@@ -229,8 +225,8 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          background: loading ? "rgba(13,13,26,0.75)" : "transparent",
-          backdropFilter: loading ? "blur(4px)" : undefined,
+          // Plain dark overlay — backdrop-filter blur over WebGL causes GPU compositing cost
+          background: loading ? "rgba(13,13,26,0.8)" : "transparent",
           color: "#fff",
           fontSize: "1rem",
           gap: "0.5rem",
@@ -248,7 +244,7 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
           ""
         )}
       </div>
-      {/* Error overlay — anchored to bottom of canvas so orbit controls remain accessible */}
+      {/* Error overlay — bottom-anchored so OrbitControls remain accessible above it */}
       {errorMessage && !loading && (
         <div
           role="alert"
@@ -264,7 +260,9 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
             padding: "0.5rem 0.75rem",
             fontSize: "0.8rem",
             lineHeight: 1.5,
-            pointerEvents: "none",
+            // Allow text selection so users can copy error details for bug reports
+            pointerEvents: "auto",
+            userSelect: "text",
           }}
         >
           {errorMessage}
@@ -284,12 +282,13 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
             pointerEvents: "none",
           }}
         >
+          {/* Mountain / terrain icon — semantically related to the feature */}
           <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-            <path d="M12 2L2 7l10 5 10-5-10-5z" />
-            <path d="M2 17l10 5 10-5" />
-            <path d="M2 12l10 5 10-5" />
+            <path d="M3 20l5-9 4 6 3-5 6 8H3z" />
+            <circle cx="17" cy="5" r="2" />
           </svg>
-          <p style={{ marginTop: "1rem" }}>Upload a GPX file to see the 3D preview</p>
+          <p style={{ marginTop: "1rem", fontSize: "1rem", fontWeight: 500 }}>Upload a GPX file to see the 3D preview</p>
+          <p style={{ marginTop: "0.35rem", fontSize: "0.85rem", color: "#6677aa" }}>Supports .gpx and .igc formats</p>
         </div>
       )}
     </div>

@@ -28,7 +28,21 @@ import TrailPrintApp from "../components/TrailPrintApp";
       --radius: 10px;
     }
 
-    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; font-size: 15px; }
+    /* 0.9375rem = 15px at browser default 16px, but scales with user font-size preferences */
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; font-size: 0.9375rem; }
+
+    /* ── Visually hidden but screen-reader accessible ── */
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border-width: 0;
+    }
 
     /* ── Skip navigation link (visually hidden until focused) ── */
     .skip-link {
@@ -65,6 +79,7 @@ import TrailPrintApp from "../components/TrailPrintApp";
       background: var(--surface);
       border-right: 1px solid var(--border);
       overflow-y: auto;
+      overscroll-behavior: contain; /* prevent scroll chaining to page / pull-to-refresh */
       padding: 1rem;
       /* Safe area inset for notch devices (no-op on desktop) */
       padding-top: max(1rem, env(safe-area-inset-top));
@@ -111,7 +126,8 @@ import TrailPrintApp from "../components/TrailPrintApp";
       padding: 1.5rem 1rem;
       text-align: center;
       cursor: pointer;
-      transition: border-color 0.15s, background 0.15s;
+      /* Animate border-color, background, and height collapse smoothly */
+      transition: border-color 0.15s, background 0.15s, min-height 0.2s;
       min-height: 120px;
       display: flex;
       flex-direction: column;
@@ -122,7 +138,7 @@ import TrailPrintApp from "../components/TrailPrintApp";
     .upload-zone:hover { border-color: var(--accent); background: rgba(37,99,235,0.05); }
     .upload-zone.dragging { border-color: var(--accent); background: rgba(37,99,235,0.14); border-style: solid; }
     .upload-zone.has-file { border-style: solid; border-color: var(--success); min-height: 80px; padding: 0.75rem 1rem; }
-    .upload-zone:focus-visible { outline-color: var(--text); }
+    /* Uses global --accent ring — consistent with all other focusable elements */
     .upload-icon { width: 36px; height: 36px; color: var(--muted); }
     .upload-stats { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.85rem; }
     .upload-stats strong { color: #4ade80; /* green-400: ~7:1 on --surface */ }
@@ -152,13 +168,13 @@ import TrailPrintApp from "../components/TrailPrintApp";
       padding: 0.5rem 0.75rem;
       display: flex;
       flex-direction: column;
-      gap: 0.4rem;
+      gap: 0.6rem; /* increased from 0.4rem — reduces cramped stacking of form rows */
     }
     label {
       display: flex;
       flex-direction: column;
       gap: 0.25rem;
-      font-size: 0.867rem; /* ~13px at 15px base — keeps labels above 12px floor */
+      font-size: 0.867rem; /* ~13px at base — keeps labels above 12px floor */
       color: var(--text);
     }
     label > span { color: var(--text); font-size: 0.867rem; }
@@ -185,7 +201,7 @@ import TrailPrintApp from "../components/TrailPrintApp";
     }
     .badge {
       margin-left: auto;
-      font-size: 0.8rem; /* 12px at 15px base — minimum legible size */
+      font-size: 0.875rem; /* 14px at default — above 12px floor with zoom tolerance */
       background: rgba(139,92,246,0.2);
       color: #c4b5fd; /* purple-300: ~9:1 on --surface2 */
       padding: 0.1rem 0.4rem;
@@ -208,14 +224,14 @@ import TrailPrintApp from "../components/TrailPrintApp";
       transition: background 0.15s;
     }
     .btn-primary:hover { background: #1d4ed8; /* blue-700: white contrast 7.3:1 ✓ */ }
-    .btn-primary:disabled { opacity: 0.65; cursor: not-allowed; }
+    .btn-primary[disabled], .btn-primary[aria-disabled="true"] { opacity: 0.65; cursor: not-allowed; }
     .btn-primary:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
     /* Export Generate button overrides: auto width, matches btn-export height */
     .btn-generate-export { width: auto; padding: 0.55rem 1.25rem; }
 
-    /* Export buttons */
+    /* Export buttons / radio group */
     .export-buttons { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-    .export-buttons > span { font-weight: 600; color: var(--text); font-size: 0.8rem; }
+    .export-format-group { border: none; padding: 0; margin: 0; display: contents; }
     .btn-export {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -229,17 +245,18 @@ import TrailPrintApp from "../components/TrailPrintApp";
       transition: border-color 0.15s, background 0.15s;
     }
     /* Active (selected format) has stronger tint + inset indicator */
-    .btn-export.active {
+    .btn-export[aria-checked="true"] {
       border-color: var(--accent);
       background: rgba(37,99,235,0.18);
       box-shadow: inset 0 -2px 0 var(--accent);
     }
     /* Hover on non-active buttons: lighter tint */
-    .btn-export:hover:not(.active) { border-color: var(--accent); background: rgba(37,99,235,0.08); }
-    .btn-export:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-export:hover:not([aria-checked="true"]) { border-color: var(--accent); background: rgba(37,99,235,0.08); }
+    .btn-export[disabled] { opacity: 0.5; cursor: not-allowed; }
     .btn-download {
       display: inline-flex;
       align-items: center;
+      gap: 0.3rem;
       background: var(--success);
       color: #fff;
       border-radius: 8px;
@@ -249,9 +266,13 @@ import TrailPrintApp from "../components/TrailPrintApp";
       font-size: 0.85rem;
       font-weight: 600;
       transition: background 0.15s;
+      max-width: 240px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
-    /* #16a34a (green-600): white text contrast ~5.1:1 — maintains WCAG AA */
-    .btn-download:hover { background: #16a34a; }
+    /* #166534 (green-800): white text contrast ~5.4:1 — exceeds WCAG AA ✓ */
+    .btn-download:hover { background: #166534; }
     .btn-download:focus-visible {
       outline: 2px solid #4ade80;
       outline-offset: 3px;
@@ -259,7 +280,7 @@ import TrailPrintApp from "../components/TrailPrintApp";
 
     /* Job status */
     .job-status { display: flex; align-items: center; gap: 0.75rem; flex: 1; flex-wrap: wrap; }
-    .progress-bar { height: 6px; min-width: 160px; flex: 1; max-width: 280px; flex-shrink: 0; background: #0f0f20; border-radius: 3px; overflow: hidden; }
+    .progress-bar { height: 6px; min-width: 160px; flex: 1; max-width: 280px; flex-shrink: 0; background: #2a2a48; border-radius: 3px; overflow: hidden; }
     .progress-fill { height: 100%; border-radius: 3px; transition: width 0.3s; background: var(--accent); }
     .progress-fill.done { background: var(--success); }
     .progress-fill.failed { background: var(--error); }
@@ -289,9 +310,10 @@ import TrailPrintApp from "../components/TrailPrintApp";
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* Respect user motion preference — disable looping animations */
+    /* Respect user motion preference — replace rotation with a static "⋯" indicator */
     @media (prefers-reduced-motion: reduce) {
-      .spinner { animation: none; border-top-color: #fff; opacity: 0.8; }
+      .spinner { animation: none; border: none; width: auto; height: auto; font-size: 1.2rem; letter-spacing: 0.1em; opacity: 0.9; }
+      .spinner::before { content: "⋯"; }
       .progress-fill { transition: none; }
     }
 
@@ -307,7 +329,7 @@ import TrailPrintApp from "../components/TrailPrintApp";
         /* Use viewport-relative height so the preview is usable on portrait phones */
         grid-template-rows: auto min(65vw, 400px) auto;
       }
-      .sidebar { grid-row: 1; height: auto; max-height: 55vh; overflow-y: auto; }
+      .sidebar { grid-row: 1; height: auto; max-height: 60vh; overflow-y: auto; }
       .preview-area { grid-row: 2; }
       .download-panel {
         grid-row: 3;
@@ -329,7 +351,7 @@ import TrailPrintApp from "../components/TrailPrintApp";
 </head>
 <body>
   <!-- Skip navigation: allows keyboard users to jump past sidebar controls -->
-  <a href="#main-content" class="skip-link">Skip to 3D preview</a>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
 
   <!--
     <main> is in the static HTML shell so landmark navigation is available
@@ -338,5 +360,11 @@ import TrailPrintApp from "../components/TrailPrintApp";
   <main id="main-content">
     <TrailPrintApp client:load />
   </main>
+
+  <noscript>
+    <div style="display:flex;align-items:center;justify-content:center;height:100vh;padding:2rem;text-align:center;color:#e0e0f0;background:#0d0d1a;font-family:system-ui,sans-serif;">
+      <p>TrailPrint3D requires JavaScript to run. Please enable JavaScript in your browser settings.</p>
+    </div>
+  </noscript>
 </body>
 </html>

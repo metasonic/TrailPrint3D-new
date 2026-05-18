@@ -234,6 +234,11 @@ def export_model(
                 proc.kill()
             except OSError:
                 pass
+            # Reap the killed process — avoids zombie accumulation in the Celery worker.
+            try:
+                proc.wait(timeout=2)
+            except Exception:
+                pass
         _update_job(r, job_id, status="failed", error="Generation timed out")
         raise
 
