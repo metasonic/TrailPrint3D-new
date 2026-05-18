@@ -428,6 +428,7 @@ export default function TrailPrintApp() {
                 type="button"
                 className={`btn-export${exportFormat === fmt ? " active" : ""}`}
                 onClick={() => setExportFormat(fmt)}
+                disabled={jobStatus?.status === "running" || jobStatus?.status === "pending"}
                 aria-pressed={exportFormat === fmt}
               >
                 {fmt}

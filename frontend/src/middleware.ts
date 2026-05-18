@@ -6,14 +6,19 @@ export const onRequest = defineMiddleware(async (_context, next) => {
   // Derive the API origin from the public env var so connect-src covers
   // cross-origin API calls in production (frontend on :3000, API on :8000).
   const apiBase = import.meta.env.PUBLIC_API_URL ?? "http://localhost:8000";
+  // Only absolute URLs (http/https) produce valid CSP source expressions.
+  // Relative paths like "/api" are not valid CSP origins and would be silently
+  // ignored by browsers — guard against that misconfiguration.
   let apiOrigin = "";
   try {
-    apiOrigin = new URL(apiBase).origin;
+    const parsed = new URL(apiBase);
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      apiOrigin = parsed.origin;
+    }
   } catch {
-    apiOrigin = apiBase;
+    // malformed URL — fall back to 'self' only
   }
-  // 'self' plus the API origin (may be same origin in production behind a reverse proxy)
-  const connectSrc = `'self' ${apiOrigin}`;
+  const connectSrc = apiOrigin ? `'self' ${apiOrigin}` : "'self'";
 
   const h = response.headers;
   h.set("X-Frame-Options", "DENY");

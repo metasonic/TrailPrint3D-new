@@ -95,7 +95,7 @@ import TrailPrintApp from "../components/TrailPrintApp";
       margin-bottom: 0.25rem;
     }
     .app-header h1 { font-size: 1.1rem; font-weight: 700; color: #60a5fa; /* blue-400: ~8:1 on --surface */ }
-    .app-header span { font-size: 0.75rem; color: var(--muted); }
+    .app-header span { font-size: 0.8rem; color: var(--muted); /* 12px at 15px base — min legible */ }
 
     /* Upload zone */
     .upload-zone {
@@ -112,7 +112,7 @@ import TrailPrintApp from "../components/TrailPrintApp";
       justify-content: center;
       gap: 0.4rem;
     }
-    .upload-zone:hover, .upload-zone.dragging { border-color: var(--accent); background: rgba(79,142,247,0.05); }
+    .upload-zone:hover, .upload-zone.dragging { border-color: var(--accent); background: rgba(37,99,235,0.08); /* #2563eb @ 8% */ }
     .upload-zone.has-file { border-style: solid; border-color: var(--success); }
     .upload-icon { width: 36px; height: 36px; color: var(--muted); }
     .upload-stats { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.85rem; }
@@ -172,7 +172,7 @@ import TrailPrintApp from "../components/TrailPrintApp";
     }
     .badge {
       margin-left: auto;
-      font-size: 0.65rem;
+      font-size: 0.8rem; /* 12px at 15px base — minimum legible size */
       background: rgba(139,92,246,0.2);
       color: #c4b5fd; /* purple-300: ~9:1 on --surface2 */
       padding: 0.1rem 0.4rem;
