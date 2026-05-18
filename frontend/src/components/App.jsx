@@ -30,6 +30,7 @@ export default function App() {
     if (!selectedFile) return;
     if (!selectedFile.name.endsWith('.gpx')) {
       setStatus('Error: Only .gpx files are allowed');
+      setTimeout(() => setStatus(''), 4000);
       return;
     }
 
@@ -75,6 +76,15 @@ export default function App() {
     setIsDragActive(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       processFile(e.dataTransfer.files[0]);
+    }
+  };
+
+  const clearFile = () => {
+    setFile(null);
+    setFileId(null);
+    setModelUrl(null);
+    if (fileInputRef.current) {
+        fileInputRef.current.value = "";
     }
   };
 
@@ -156,17 +166,17 @@ export default function App() {
   return (
     <div className="flex h-full w-full">
       {/* Sidebar Panel */}
-      <div className="w-80 bg-white border-r flex flex-col p-4 overflow-y-auto">
-        <div className="mb-6">
-          <h2 className="text-lg font-bold mb-2">1. Upload Track</h2>
+      <div className="w-80 bg-white shadow-xl z-20 flex flex-col p-5 overflow-y-auto">
+        <div className="mb-8">
+          <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3">1. Upload Track</h2>
           <div
-            className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
-              isDragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
+            className={`relative border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all duration-200 ${
+              isDragActive ? 'border-indigo-500 bg-indigo-50 shadow-inner' : 'border-gray-200 hover:border-indigo-400 hover:bg-gray-50'
             }`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            onClick={() => !uploading && fileInputRef.current?.click()}
+            onClick={() => !uploading && !file && fileInputRef.current?.click()}
           >
             <input
               type="file"
@@ -177,63 +187,84 @@ export default function App() {
               ref={fileInputRef}
             />
             {file ? (
-              <div className="text-blue-600 font-medium break-all">{file.name}</div>
+              <div className="flex flex-col items-center">
+                 <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-indigo-500 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                 </svg>
+                <div className="text-gray-800 font-medium break-all text-sm mb-3">{file.name}</div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); clearFile(); }}
+                  disabled={uploading}
+                  className="px-3 py-1 text-xs font-semibold text-red-600 bg-red-50 rounded-full hover:bg-red-100 transition disabled:opacity-50"
+                >
+                  Clear File
+                </button>
+              </div>
             ) : (
               <div className="text-gray-500">
-                <p className="font-medium">Click or drag GPX here</p>
-                <p className="text-sm mt-1">Maximum size: 50MB</p>
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 mx-auto text-gray-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                <p className="font-medium text-sm text-gray-600">Click or drag GPX here</p>
+                <p className="text-xs text-gray-400 mt-1">Maximum size: 50MB</p>
               </div>
             )}
           </div>
         </div>
 
-        <div className={`mb-6 ${!fileId || uploading ? 'opacity-50 pointer-events-none' : ''}`}>
-          <h2 className="text-lg font-bold mb-2">2. Map Settings</h2>
-          <div className="space-y-4">
+        <div className={`mb-8 transition-opacity duration-300 ${!fileId || uploading ? 'opacity-40 pointer-events-none' : 'opacity-100'}`}>
+          <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3">2. Map Settings</h2>
+          <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 space-y-4 shadow-sm">
             <div>
-              <label className="block text-sm font-medium text-gray-700">Shape</label>
-              <select className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border focus:border-blue-500 focus:ring-blue-500" value={shape} onChange={e => setShape(e.target.value)}>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Shape</label>
+              <select className="block w-full rounded-md border-gray-200 bg-white shadow-sm py-2 px-3 text-sm focus:border-indigo-500 focus:ring-indigo-500 transition" value={shape} onChange={e => setShape(e.target.value)}>
                 <option value="circle">Circle</option>
                 <option value="square">Square</option>
                 <option value="hexagon">Hexagon</option>
               </select>
             </div>
 
-            <label className="flex items-center cursor-pointer">
-              <input type="checkbox" className="rounded border-gray-300 text-blue-600 shadow-sm mr-2 focus:ring-blue-500" checked={colorMode} onChange={e => setColorMode(e.target.checked)} />
-              <span className="text-sm text-gray-700">Single-color Print Mode</span>
-            </label>
+            <div className="pt-2">
+                <label className="flex items-center cursor-pointer group">
+                <input type="checkbox" className="rounded text-indigo-600 border-gray-300 shadow-sm focus:ring-indigo-500 mr-3" checked={colorMode} onChange={e => setColorMode(e.target.checked)} />
+                <span className="text-sm text-gray-700 group-hover:text-indigo-700 transition">Single-color Print Mode</span>
+                </label>
+            </div>
 
-            <label className="flex items-center cursor-pointer">
-              <input type="checkbox" className="rounded border-gray-300 text-blue-600 shadow-sm mr-2 focus:ring-blue-500" checked={roads} onChange={e => setRoads(e.target.checked)} />
-              <span className="text-sm text-gray-700">Include Roads</span>
-            </label>
+            <div>
+                <label className="flex items-center cursor-pointer group">
+                <input type="checkbox" className="rounded text-indigo-600 border-gray-300 shadow-sm focus:ring-indigo-500 mr-3" checked={roads} onChange={e => setRoads(e.target.checked)} />
+                <span className="text-sm text-gray-700 group-hover:text-indigo-700 transition">Include Roads</span>
+                </label>
+            </div>
 
-            <button className="w-full bg-blue-100 text-blue-700 font-medium p-2 rounded text-sm hover:bg-blue-200 transition" onClick={() => fileId && generatePreview(fileId, shape, colorMode, roads)}>
-              Update Preview
-            </button>
+            <div className="pt-2">
+                <button className="w-full bg-indigo-50 text-indigo-700 font-semibold py-2 px-4 rounded-lg text-sm border border-indigo-100 hover:bg-indigo-100 hover:border-indigo-200 transition" onClick={() => fileId && generatePreview(fileId, shape, colorMode, roads)}>
+                Update Preview
+                </button>
+            </div>
           </div>
         </div>
 
-        <div className={`mt-auto ${!fileId || uploading ? 'opacity-50 pointer-events-none' : ''}`}>
-          <h2 className="text-lg font-bold mb-2">3. Export</h2>
+        <div className={`mt-auto transition-opacity duration-300 ${!fileId || uploading ? 'opacity-40 pointer-events-none' : 'opacity-100'}`}>
+          <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3">3. Export</h2>
           <div className="grid grid-cols-3 gap-2">
-            <button onClick={() => handleExport('stl')} className="bg-blue-600 text-white p-2 rounded hover:bg-blue-700 text-sm font-medium shadow-sm">STL</button>
-            <button onClick={() => handleExport('obj')} className="bg-blue-600 text-white p-2 rounded hover:bg-blue-700 text-sm font-medium shadow-sm">OBJ</button>
-            <button onClick={() => handleExport('3mf')} className="bg-blue-600 text-white p-2 rounded hover:bg-blue-700 text-sm font-medium shadow-sm">3MF</button>
+            <button onClick={() => handleExport('stl')} className="bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 text-sm font-bold shadow-md hover:shadow-lg transition">STL</button>
+            <button onClick={() => handleExport('obj')} className="bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 text-sm font-bold shadow-md hover:shadow-lg transition">OBJ</button>
+            <button onClick={() => handleExport('3mf')} className="bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 text-sm font-bold shadow-md hover:shadow-lg transition">3MF</button>
           </div>
         </div>
       </div>
 
       {/* 3D Viewport */}
-      <div className="flex-grow relative">
+      <div className="flex-grow relative z-0">
         <Preview3D modelUrl={modelUrl} />
 
         {/* Status Bar */}
-        <div className="absolute bottom-4 left-4 right-4 flex justify-between pointer-events-none">
-          <div className={`bg-gray-900/90 text-white px-4 py-3 rounded-lg shadow-lg flex items-center transition-opacity duration-300 ${status ? 'opacity-100' : 'opacity-0'}`}>
+        <div className="absolute bottom-6 left-6 right-6 flex justify-center pointer-events-none">
+          <div className={`bg-gray-900/90 backdrop-blur text-white px-5 py-3 rounded-full shadow-2xl flex items-center transform transition-all duration-300 ${status ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'}`}>
             {uploading && <Spinner />}
-            <span className="font-medium">{status}</span>
+            <span className="font-medium tracking-wide">{status}</span>
           </div>
         </div>
       </div>
