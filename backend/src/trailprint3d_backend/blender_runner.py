@@ -2,7 +2,7 @@ import bpy
 import sys
 import json
 import os
-import addon_utils
+import traceback
 
 def setup_trailprint3d():
     addon_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../TrailPrint3D"))
@@ -27,13 +27,14 @@ def apply_settings(settings):
         if 'roads' in settings:
             bpy.context.scene.tp3d.roads_enable = settings['roads']
     except Exception as e:
-        print(f"Warning: Failed to apply some settings: {e}")
+        print(f"Warning: Failed to apply some settings: {e}", file=sys.stderr)
 
 def run_preview(job_id: str, gpx_path: str, output_path: str, settings_json: str):
     settings = json.loads(settings_json)
     try:
         setup_trailprint3d()
     except Exception as e:
+        traceback.print_exc(file=sys.stderr)
         return {"status": "error", "error": f"Failed to setup addon: {str(e)}"}
 
     bpy.ops.object.select_all(action='SELECT')
@@ -54,6 +55,7 @@ def run_preview(job_id: str, gpx_path: str, output_path: str, settings_json: str
 
         bpy.ops.export_scene.gltf(filepath=output_path, export_format='GLB')
     except Exception as e:
+        traceback.print_exc(file=sys.stderr)
         return {"status": "error", "error": f"Generation failed: {str(e)}"}
 
     return {"status": "success", "mesh_path": output_path}
@@ -63,6 +65,7 @@ def run_export(job_id: str, gpx_path: str, output_path: str, format: str, settin
     try:
         setup_trailprint3d()
     except Exception as e:
+        traceback.print_exc(file=sys.stderr)
         return {"status": "error", "error": f"Failed to setup addon: {str(e)}"}
 
     bpy.ops.object.select_all(action='SELECT')
@@ -78,6 +81,7 @@ def run_export(job_id: str, gpx_path: str, output_path: str, format: str, settin
 
         bpy.ops.tp3d.run_generation()
     except Exception as e:
+        traceback.print_exc(file=sys.stderr)
         return {"status": "error", "error": f"Generation failed: {str(e)}"}
 
     try:
@@ -88,6 +92,7 @@ def run_export(job_id: str, gpx_path: str, output_path: str, format: str, settin
         elif format == "3mf":
             bpy.ops.export_mesh.three_mf(filepath=output_path)
     except Exception as e:
+         traceback.print_exc(file=sys.stderr)
          return {"status": "error", "error": f"Export failed: {str(e)}"}
 
     return {"status": "success", "mesh_path": output_path}
