@@ -26,8 +26,8 @@ redis_url = os.getenv('REDIS_URL', 'redis://localhost:6379')
 redis_conn = Redis.from_url(redis_url)
 q = Queue(connection=redis_conn)
 
-UPLOAD_DIR = os.getenv('UPLOAD_DIR', '/tmp/trailprint3d_uploads')
-OUTPUT_DIR = os.getenv('OUTPUT_DIR', '/tmp/trailprint3d_outputs')
+UPLOAD_DIR = os.path.abspath(os.getenv('UPLOAD_DIR', '/tmp/trailprint3d_uploads'))
+OUTPUT_DIR = os.path.abspath(os.getenv('OUTPUT_DIR', '/tmp/trailprint3d_outputs'))
 MAX_UPLOAD_SIZE = int(os.getenv('MAX_UPLOAD_SIZE', '52428800')) # Default 50MB
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -45,6 +45,11 @@ class PreviewRequest(BaseModel):
     colorMode: bool = False
     roads: bool = False
 
+def is_safe_path(base_dir, target_path):
+    base = os.path.abspath(base_dir)
+    target = os.path.abspath(target_path)
+    return os.path.commonpath([base, target]) == base
+
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
@@ -59,13 +64,18 @@ async def upload_gpx(request: Request, file: UploadFile = File(...)):
     file_path = os.path.join(UPLOAD_DIR, safe_filename)
 
     size = 0
-    with open(file_path, "wb") as buffer:
-        while chunk := await file.read(8192):
-            size += len(chunk)
-            if size > MAX_UPLOAD_SIZE:
-                os.remove(file_path)
-                raise HTTPException(status_code=413, detail="File too large")
-            buffer.write(chunk)
+    try:
+        with open(file_path, "wb") as buffer:
+            while chunk := await file.read(8192):
+                size += len(chunk)
+                if size > MAX_UPLOAD_SIZE:
+                    raise HTTPException(status_code=413, detail="File too large")
+                buffer.write(chunk)
+    except BaseException as e:
+        # Catch BaseException to also catch asyncio.CancelledError when clients disconnect
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise e
 
     return {"file_id": file_id, "filename": safe_filename}
 
@@ -80,7 +90,6 @@ async def generate_preview(file_id: str, req: PreviewRequest):
     output_path = os.path.join(OUTPUT_DIR, f"{job_id}_preview.glb")
 
     settings = req.dict()
-    # Run enqueue in a threadpool to avoid blocking the event loop
     job = await asyncio.to_thread(q.enqueue, process_preview, job_id, gpx_path, output_path, settings, job_id=job_id)
     return {"job_id": job.get_id()}
 
@@ -88,7 +97,8 @@ async def generate_preview(file_id: str, req: PreviewRequest):
 async def request_export(req: ExportRequest):
     safe_gpx_filename = os.path.basename(req.gpx_filename)
     gpx_path = os.path.join(UPLOAD_DIR, safe_gpx_filename)
-    if not os.path.normpath(gpx_path).startswith(os.path.abspath(UPLOAD_DIR)):
+
+    if not is_safe_path(UPLOAD_DIR, gpx_path):
         raise HTTPException(status_code=400, detail="Invalid file path")
 
     if not os.path.exists(gpx_path):
@@ -101,14 +111,12 @@ async def request_export(req: ExportRequest):
     output_path = os.path.join(OUTPUT_DIR, f"{job_id}_export.{req.format}")
 
     settings = req.dict()
-    # Run enqueue in a threadpool to avoid blocking the event loop
     job = await asyncio.to_thread(q.enqueue, process_export, job_id, gpx_path, output_path, req.format, settings, job_id=job_id)
     return {"job_id": job.get_id()}
 
 @app.get("/job/{job_id}")
 async def get_job_status(job_id: str):
     try:
-        # Run fetch in a threadpool to avoid blocking the event loop
         job = await asyncio.to_thread(Job.fetch, job_id, connection=redis_conn)
     except Exception:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -124,8 +132,11 @@ async def get_job_status(job_id: str):
 async def download_file(filename: str):
     safe_filename = os.path.basename(filename)
     file_path = os.path.join(OUTPUT_DIR, safe_filename)
-    if not os.path.normpath(file_path).startswith(os.path.abspath(OUTPUT_DIR)):
+
+    if not is_safe_path(OUTPUT_DIR, file_path):
         raise HTTPException(status_code=400, detail="Invalid file path")
+
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
+
     return FileResponse(file_path)

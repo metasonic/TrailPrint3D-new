@@ -1,7 +1,9 @@
 import { useState, useRef } from 'react';
 import Preview3D from './Preview3D';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Use a relative path so Nginx can reverse proxy it.
+// If running dev server locally without Nginx, it falls back to localhost.
+const API_URL = import.meta.env.DEV ? 'http://localhost:8000' : '/api';
 
 // Simple SVG Spinner
 const Spinner = () => (
@@ -98,7 +100,6 @@ export default function App() {
           setModelUrl(`${API_URL}/download/${data.result.split('/').pop()}`);
           setStatus('Preview generated!');
           setUploading(false);
-          // Auto clear success message after 3s
           setTimeout(() => setStatus(''), 3000);
         } else {
           setStatus('Export complete!');

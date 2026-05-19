@@ -98,21 +98,26 @@ def run_export(job_id: str, gpx_path: str, output_path: str, format: str, settin
     return {"status": "success", "mesh_path": output_path}
 
 if __name__ == "__main__":
-    command = sys.argv[sys.argv.index("--") + 1] if "--" in sys.argv else sys.argv[1]
-    args = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("command")
+    parser.add_argument("job_id")
+    parser.add_argument("gpx_path")
+    parser.add_argument("output_path")
+    parser.add_argument("--format", default=None)
+    parser.add_argument("--settings", default="{}")
+    parser.add_argument("--result-file", required=True)
 
-    if command == "preview":
-        job_id = args[1]
-        gpx_path = args[2]
-        output_path = args[3]
-        settings = args[4]
-        res = run_preview(job_id, gpx_path, output_path, settings)
-        print(json.dumps(res))
-    elif command == "export":
-        job_id = args[1]
-        gpx_path = args[2]
-        output_path = args[3]
-        fmt = args[4]
-        settings = args[5]
-        res = run_export(job_id, gpx_path, output_path, fmt, settings)
-        print(json.dumps(res))
+    # Handle the fact that blender might pass `--` before our args
+    args_list = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:]
+    args = parser.parse_args(args_list)
+
+    if args.command == "preview":
+        res = run_preview(args.job_id, args.gpx_path, args.output_path, args.settings)
+    elif args.command == "export":
+        res = run_export(args.job_id, args.gpx_path, args.output_path, args.format, args.settings)
+    else:
+        res = {"status": "error", "error": "Unknown command"}
+
+    with open(args.result_file, "w") as f:
+        json.dump(res, f)
