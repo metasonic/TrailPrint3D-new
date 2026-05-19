@@ -127,7 +127,7 @@ def export_model(
             "el_oActive": settings_dict.get("include_ocean", False),
             "disableCache": False,
             "apiRetries": 5,
-            "opentopoAdress": str(getattr(cfg, "OPENTOPODATA_URL", "https://api.opentopodata.org/v1/")),
+            "opentopoAdress": str(cfg.OPENTOPODATA_URL),
         },
         "cache_dir": str(cfg.CACHE_DIR),
         # API key is NOT stored in this file — it is passed as an environment variable
@@ -151,8 +151,20 @@ def export_model(
         str(config_file),
     ]
 
-    # Pass API key via environment variable, not config file on disk
-    proc_env = dict(os.environ)
+    # Pass only a minimal safe environment to the Blender subprocess.
+    # Forwarding the entire worker env risks leaking DATABASE_URL, SECRET_KEY,
+    # and other internal credentials to the third-party addon code.
+    _BLENDER_SAFE_ENV = {
+        "PATH", "HOME", "USER", "LOGNAME",
+        "TMPDIR", "TEMP", "TMP",
+        "LD_LIBRARY_PATH", "LIBRARY_PATH",
+        "XDG_RUNTIME_DIR", "XDG_DATA_DIRS", "XDG_CONFIG_DIRS", "XDG_CACHE_HOME",
+        "LANG", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LANGUAGE",
+        "DISPLAY", "WAYLAND_DISPLAY",
+        "DBUS_SESSION_BUS_ADDRESS",
+    }
+    proc_env = {k: v for k, v in os.environ.items() if k in _BLENDER_SAFE_ENV}
+    # API key passed via env, not config file on disk
     proc_env["OPENTOPOGRAPHY_API_KEY"] = cfg.OPENTOPOGRAPHY_API_KEY
 
     _update_job(r, job_id, status="running", progress=0, message="Starting Blender...")
@@ -160,6 +172,8 @@ def export_model(
     proc: subprocess.Popen | None = None
     try:
         config_file.write_text(json.dumps(config_payload, indent=2))
+        # Restrict permissions on the config file — it contains internal paths
+        config_file.chmod(0o600)
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -172,13 +186,28 @@ def export_model(
         # Drain stdout in a thread while enforcing a hard timeout.
         # The naive "for line in proc.stdout + proc.wait(timeout=N)" pattern
         # does NOT enforce the timeout: the for-loop blocks until EOF regardless.
+        # Progress and status lines are pushed to Redis in real-time inside _drain
+        # so the user sees live updates throughout the Blender run.
         output_lines: list[str] = []
 
         def _drain():
-            assert proc.stdout is not None
+            if proc.stdout is None:
+                logger.error("Blender stdout pipe is None for job %s", job_id)
+                return
             for line in proc.stdout:
                 if len(output_lines) < _MAX_OUTPUT_LINES:
                     output_lines.append(line)
+                stripped = line.strip()
+                if stripped.startswith("PROGRESS:"):
+                    try:
+                        pct = int(stripped.split(":")[1].strip())
+                        _update_job(r, job_id, progress=pct)
+                    except ValueError:
+                        pass
+                elif stripped.startswith("STATUS:"):
+                    msg = stripped[7:].strip()
+                    msg = "".join(c for c in msg if c.isprintable() and ord(c) < 128)[:200]
+                    _update_job(r, job_id, message=msg)
 
         drain_thread = threading.Thread(target=_drain, daemon=True)
         drain_thread.start()
@@ -208,23 +237,11 @@ def export_model(
                 pass
             proc.wait()
 
-        # Write log and parse progress/status messages for Redis
+        # Write log for debugging (progress/status already applied to Redis by _drain)
         log_file = job_dir / "blender.log"
         with open(log_file, "w", encoding="utf-8") as lf:
             for line in output_lines:
                 lf.write(line)
-                stripped = line.strip()
-                if stripped.startswith("PROGRESS:"):
-                    try:
-                        pct = int(stripped.split(":")[1].strip())
-                        _update_job(r, job_id, progress=pct)
-                    except ValueError:
-                        pass
-                elif stripped.startswith("STATUS:"):
-                    # Sanitise message: printable ASCII only, max 200 chars
-                    msg = stripped[7:].strip()
-                    msg = "".join(c for c in msg if c.isprintable() and ord(c) < 128)[:200]
-                    _update_job(r, job_id, message=msg)
 
         if proc.returncode != 0:
             # Log the actual exit code server-side; return a generic message to Redis

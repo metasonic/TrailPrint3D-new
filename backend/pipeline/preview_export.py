@@ -6,6 +6,8 @@ Coordinate transform: Blender Z-up → Three.js Y-up
 """
 from __future__ import annotations
 
+import os as _os
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
@@ -69,7 +71,6 @@ def export_preview_glb(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     # Atomic write: export to a sibling temp file then rename so concurrent
     # requests for the same file_id never serve a partially-written GLB.
-    import tempfile, os as _os
     tmp_fd, tmp_path = tempfile.mkstemp(dir=out_path.parent, suffix=".glb.tmp")
     _os.close(tmp_fd)
     try:

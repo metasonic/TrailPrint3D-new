@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from typing import Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+_UUID_PATTERN = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 
 
 class GenerationSettings(BaseModel):
@@ -14,7 +16,9 @@ class GenerationSettings(BaseModel):
 
     # Terrain
     elevation_scale: float = Field(1.0, gt=0.0)
-    num_subdivisions: int = Field(4, ge=1, le=8)
+    # le=6 matches the highest server cap (export caps at 6, preview caps at 4).
+    # Values 7-8 pass schema validation but are silently clamped server-side.
+    num_subdivisions: int = Field(4, ge=1, le=6)
     min_thickness: float = Field(2.0, ge=0.5)
     fixed_elevation_scale: bool = False
     plate_thickness: float = Field(5.0, ge=0.5)
@@ -63,6 +67,13 @@ class GenerationSettings(BaseModel):
     x_terrain_offset: float = 0.0
     y_terrain_offset: float = 0.0
 
+    @field_validator("trail_name")
+    @classmethod
+    def trail_name_not_blank(cls, v: str) -> str:
+        if v and not v.strip():
+            raise ValueError("trail_name cannot be all whitespace")
+        return v
+
 
 class TrackStats(BaseModel):
     point_count: int
@@ -82,7 +93,7 @@ class UploadResponse(BaseModel):
 
 
 class PreviewRequest(BaseModel):
-    file_id: str
+    file_id: str = Field(..., pattern=_UUID_PATTERN)
     settings: GenerationSettings = Field(default_factory=GenerationSettings)
 
 
@@ -99,7 +110,7 @@ class PreviewResponse(BaseModel):
 
 
 class ExportRequest(BaseModel):
-    file_id: str
+    file_id: str = Field(..., pattern=_UUID_PATTERN)
     settings: GenerationSettings = Field(default_factory=GenerationSettings)
     format: Literal["STL", "OBJ", "3MF"] = "STL"
 

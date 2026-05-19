@@ -12,23 +12,28 @@ from fastapi.responses import FileResponse
 
 from ..config import get_settings
 from ..models.schemas import ExportRequest, ExportResponse, JobStatus
+from ..utils.validators import UUID_RE
 
 router = APIRouter(prefix="/api", tags=["export"])
 logger = logging.getLogger(__name__)
 
-_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-# Case-insensitive so Blender's uppercase .STL/.OBJ outputs are accepted
+# Case-insensitive so Blender's uppercase .STL/.OBJ outputs are accepted.
+# GLB is not a Blender export output from this pipeline; kept for forward-compat.
 _SAFE_FILENAME_RE = re.compile(r"^[0-9a-zA-Z_\-]+\.(stl|obj|3mf|glb)$", re.IGNORECASE)
 _VALID_STATUSES = {"pending", "running", "done", "failed"}
 
-# Module-level connection pool — shared across all requests in this process
+# Module-level connection pool — shared across all requests in this process.
+# decode_responses=True means all keys/values are returned as str, not bytes,
+# eliminating the need for byte-decoding helpers.
 _pool: _redis.ConnectionPool | None = None
 
 
 def _get_redis() -> _redis.Redis:
     global _pool
     if _pool is None:
-        _pool = _redis.ConnectionPool.from_url(str(get_settings().REDIS_URL))
+        _pool = _redis.ConnectionPool.from_url(
+            str(get_settings().REDIS_URL), decode_responses=True
+        )
     return _redis.Redis(connection_pool=_pool)
 
 
@@ -39,8 +44,20 @@ async def close_pool() -> None:
         _pool = None
 
 
+async def check_redis() -> bool:
+    """Return True if Redis is reachable. Used by the health endpoint."""
+    r = _get_redis()
+    try:
+        await r.ping()
+        return True
+    except Exception:
+        return False
+    finally:
+        await r.aclose()
+
+
 def _validate_uuid(value: str, field: str) -> None:
-    if not _UUID_RE.match(value):
+    if not UUID_RE.match(value):
         raise HTTPException(status_code=400, detail=f"Invalid {field}")
 
 
@@ -60,33 +77,36 @@ async def start_export(body: ExportRequest):
 
     job_id = str(uuid.uuid4())
 
+    r = _get_redis()
     try:
-        r = _get_redis()
-        pipe = r.pipeline()
-        pipe.hset(
-            f"job:{job_id}",
-            mapping={"status": "pending", "progress": "0", "message": "Queued", "files": "[]"},
-        )
-        pipe.expire(f"job:{job_id}", 86400)
-        await pipe.execute()
-    except Exception:
-        logger.exception("Redis unavailable when creating job %s", job_id)
-        raise HTTPException(status_code=503, detail="Queue temporarily unavailable")
-
-    from ..tasks.export_task import export_model
-
-    try:
-        export_model.apply_async(
-            args=[job_id, body.file_id, body.settings.model_dump(), body.format],
-            task_id=job_id,
-        )
-    except Exception:
-        logger.exception("Failed to enqueue export task for job %s", job_id)
         try:
-            await _get_redis().delete(f"job:{job_id}")
+            pipe = r.pipeline()
+            pipe.hset(
+                f"job:{job_id}",
+                mapping={"status": "pending", "progress": "0", "message": "Queued", "files": "[]"},
+            )
+            pipe.expire(f"job:{job_id}", 86400)
+            await pipe.execute()
         except Exception:
-            pass
-        raise HTTPException(status_code=503, detail="Queue temporarily unavailable")
+            logger.exception("Redis unavailable when creating job %s", job_id)
+            raise HTTPException(status_code=503, detail="Queue temporarily unavailable")
+
+        from ..tasks.export_task import export_model
+
+        try:
+            export_model.apply_async(
+                args=[job_id, body.file_id, body.settings.model_dump(), body.format],
+                task_id=job_id,
+            )
+        except Exception:
+            logger.exception("Failed to enqueue export task for job %s", job_id)
+            try:
+                await r.delete(f"job:{job_id}")
+            except Exception:
+                pass
+            raise HTTPException(status_code=503, detail="Queue temporarily unavailable")
+    finally:
+        await r.aclose()
 
     return ExportResponse(job_id=job_id)
 
@@ -94,32 +114,30 @@ async def start_export(body: ExportRequest):
 @router.get("/job/{job_id}", response_model=JobStatus)
 async def get_job_status(job_id: str):
     _validate_uuid(job_id, "job_id")
+    r = _get_redis()
     try:
-        r = _get_redis()
         data = await r.hgetall(f"job:{job_id}")
     except Exception:
         logger.exception("Redis unavailable when fetching job %s", job_id)
         raise HTTPException(status_code=503, detail="Queue temporarily unavailable")
+    finally:
+        await r.aclose()
 
     if not data:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    def _s(v) -> str:
-        return v.decode() if isinstance(v, bytes) else str(v)
-
     files: list[str] = []
-    raw_files = data.get(b"files", data.get("files", "[]"))
     try:
-        files = json.loads(_s(raw_files))
+        files = json.loads(data.get("files", "[]"))
     except Exception:
         pass
 
     # Guard against corrupted/unexpected status values from Redis
-    raw_status = _s(data.get(b"status", data.get("status", "pending")))
+    raw_status = data.get("status", "pending")
     status = raw_status if raw_status in _VALID_STATUSES else "failed"
 
     try:
-        progress = int(_s(data.get(b"progress", data.get("progress", 0))))
+        progress = int(data.get("progress", "0"))
     except (ValueError, TypeError):
         progress = 0
 
@@ -127,8 +145,8 @@ async def get_job_status(job_id: str):
         job_id=job_id,
         status=status,
         progress=progress,
-        message=_s(data.get(b"message", data.get("message", ""))),
-        error=_s(data.get(b"error", data.get("error", ""))) or None,
+        message=data.get("message", ""),
+        error=data.get("error", "") or None,
         files=files,
     )
 
@@ -149,20 +167,21 @@ async def download_file(job_id: str, filename: str):
         raise HTTPException(status_code=400, detail="Invalid path")
 
     # Verify the job is complete before serving the file.
-    # Silently skip the check if Redis is unavailable — path existence is the final guard.
+    # Return 503 if Redis is unavailable rather than silently serving unverified files.
+    r = _get_redis()
     try:
-        r = _get_redis()
         job_data = await r.hgetall(f"job:{job_id}")
         if job_data:
-            def _s2(v) -> str:
-                return v.decode() if isinstance(v, bytes) else str(v)
-            raw_status = _s2(job_data.get(b"status", job_data.get("status", "")))
+            raw_status = job_data.get("status", "")
             if raw_status and raw_status != "done":
                 raise HTTPException(status_code=404, detail="File not found")
     except HTTPException:
         raise
     except Exception:
-        pass
+        logger.exception("Redis unavailable when verifying job %s for download", job_id)
+        raise HTTPException(status_code=503, detail="Queue temporarily unavailable")
+    finally:
+        await r.aclose()
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="File not found")

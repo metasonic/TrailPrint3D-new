@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 from pathlib import Path
@@ -11,28 +12,37 @@ from fastapi.responses import FileResponse
 from ..config import get_settings
 from ..models.schemas import PreviewRequest, PreviewResponse, TerrainPreviewStats
 from ..pipeline.elevation import ElevationConfig
+from ..utils.validators import UUID_RE
 
 router = APIRouter(prefix="/api", tags=["preview"])
 logger = logging.getLogger(__name__)
 
-_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-
-# Lazily initialised inside the first request so it is created in the running
-# event loop, not at module import time (which has no loop in Python 3.12+).
+# Initialized in app lifespan (main.py) to ensure it is created inside the
+# running event loop — Python 3.12+ raises RuntimeError if an asyncio primitive
+# is created before an event loop is running.
 _preview_semaphore: asyncio.Semaphore | None = None
+
+# Accepts {uuid}.glb (legacy) or {uuid}--{8-hex-chars}.glb (settings-hash form).
+# The hash suffix invalidates cached GLBs when generation settings change.
+_PREVIEW_FILE_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    r"(?:--[0-9a-f]{8})?\.glb$"
+)
+
+PREVIEW_TIMEOUT_S = 120.0
 
 
 def _get_semaphore() -> asyncio.Semaphore:
     global _preview_semaphore
     if _preview_semaphore is None:
+        # Lazy fallback for unit tests that do not run the full app lifespan.
+        # In production the lifespan always initializes this first.
         _preview_semaphore = asyncio.Semaphore(4)
     return _preview_semaphore
 
-PREVIEW_TIMEOUT_S = 120.0
-
 
 def _validate_uuid(value: str, field: str) -> None:
-    if not _UUID_RE.match(value):
+    if not UUID_RE.match(value):
         raise HTTPException(status_code=400, detail=f"Invalid {field}")
 
 
@@ -52,7 +62,10 @@ async def generate_preview(body: PreviewRequest):
     if gpx_path is None:
         raise HTTPException(status_code=404, detail="File not found")
 
-    out_path = cfg.OUTPUT_DIR / "preview" / f"{body.file_id}.glb"
+    # Embed a settings hash in the filename so that changing any setting
+    # produces a different path — old cached GLBs are automatically bypassed.
+    settings_hash = hashlib.md5(body.settings.model_dump_json().encode()).hexdigest()[:8]
+    out_path = cfg.OUTPUT_DIR / "preview" / f"{body.file_id}--{settings_hash}.glb"
 
     elev_cfg = ElevationConfig(
         api=settings.api,
@@ -74,11 +87,11 @@ async def generate_preview(body: PreviewRequest):
             )
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="Preview generation timed out")
-    except Exception as exc:
+    except Exception:
         logger.exception("Preview generation failed for file_id=%s", body.file_id)
         raise HTTPException(status_code=500, detail="Preview generation failed")
 
-    glb_url = f"/api/preview/{body.file_id}.glb"
+    glb_url = f"/api/preview/{body.file_id}--{settings_hash}.glb"
     return PreviewResponse(
         glb_url=glb_url,
         terrain_stats=TerrainPreviewStats(**terrain_stats),
@@ -88,8 +101,7 @@ async def generate_preview(body: PreviewRequest):
 @router.get("/preview/{filename}")
 async def serve_preview(filename: str):
     cfg = get_settings()
-    name = filename[:-4] if filename.endswith(".glb") else ""
-    if not name or not _UUID_RE.match(name):
+    if not _PREVIEW_FILE_RE.match(filename):
         raise HTTPException(status_code=400, detail="Invalid filename")
     preview_dir = (cfg.OUTPUT_DIR / "preview").resolve()
     path = (cfg.OUTPUT_DIR / "preview" / filename).resolve()

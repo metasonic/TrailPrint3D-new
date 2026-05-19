@@ -183,5 +183,5 @@ export async function getJobStatus(jobId: string, signal?: AbortSignal): Promise
 }
 
 export function downloadUrl(jobId: string, filename: string): string {
-  return `${API_BASE}/api/download/${jobId}/${encodeURIComponent(filename)}`;
+  return `${API_BASE}/api/download/${encodeURIComponent(jobId)}/${encodeURIComponent(filename)}`;
 }

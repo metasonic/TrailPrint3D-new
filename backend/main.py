@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -24,6 +25,10 @@ async def lifespan(app: FastAPI):
     cfg.CACHE_DIR.mkdir(parents=True, exist_ok=True)
     for sub in ("elevation", "tiles", "osm"):
         (cfg.CACHE_DIR / sub).mkdir(exist_ok=True)
+    # Initialize preview semaphore inside the running event loop.
+    # Python 3.12+ requires asyncio primitives to be created inside an async
+    # context; creating them at module import time (no loop) raises RuntimeError.
+    preview._preview_semaphore = asyncio.Semaphore(4)
     yield
     await export.close_pool()
 
@@ -62,7 +67,10 @@ class _SecurityHeaders(BaseHTTPMiddleware):
             "object-src 'none';"
         )
         resp.headers["Permissions-Policy"] = "geolocation=(self), camera=(), microphone=(), payment=()"
-        if cfg.ENVIRONMENT != "development":
+        # Re-read settings on every request so HSTS is correct even if settings
+        # are cleared between tests (get_settings uses lru_cache; call get_settings()
+        # here rather than capturing a module-level cfg to avoid stale values).
+        if get_settings().ENVIRONMENT != "development":
             resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return resp
 
@@ -84,10 +92,5 @@ app.include_router(export.router)
 
 @app.get("/health")
 async def health():
-    try:
-        r = export._get_redis()
-        await r.ping()
-        redis_ok = True
-    except Exception:
-        redis_ok = False
+    redis_ok = await export.check_redis()
     return {"status": "ok" if redis_ok else "degraded", "redis": redis_ok}

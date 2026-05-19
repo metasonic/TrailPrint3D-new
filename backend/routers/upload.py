@@ -87,7 +87,7 @@ async def upload_gpx(file: UploadFile = File(...)):
     except HTTPException:
         dest.unlink(missing_ok=True)
         raise
-    except Exception as exc:
+    except Exception:
         dest.unlink(missing_ok=True)
         logger.exception("Failed to parse uploaded track file %s", file_id)
         raise HTTPException(status_code=422, detail="Could not parse track file — ensure it is a valid GPX or IGC")

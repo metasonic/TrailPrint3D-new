@@ -1,6 +1,6 @@
 /**
  * Main React island — owns all state: upload → preview → export.
- * Rendered client:load on the index page.
+ * Rendered client:only on the index page.
  */
 import { useState, useCallback, useRef, useEffect } from "react";
 import Preview3D from "./Preview3D";
@@ -76,9 +76,15 @@ export default function TrailPrintApp() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const exportGenRef = useRef(0);
   const lastPreviewedFileIdRef = useRef<string | null>(null);
+  // Track the settings JSON used in the most recent preview so the debounce
+  // effect can skip re-previewing when settings haven't actually changed since
+  // the last handleFile-triggered preview (prevents a double preview after upload).
+  const lastPreviewedSettingsRef = useRef<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Focus target after file upload: first summary in settings (naturally focusable, no tabIndex needed)
   const firstSummaryRef = useRef<HTMLElement>(null);
+  // Signal that a file was just loaded so the focus effect can fire once
+  const fileJustLoadedRef = useRef(false);
 
   const handlePreview = useCallback(async (fid: string, s: GenerationSettings) => {
     previewAbortRef.current?.abort();
@@ -94,8 +100,7 @@ export default function TrailPrintApp() {
       }
     } catch (e: unknown) {
       if (e instanceof Error && e.name === "AbortError") {
-        // Only suppress silently if the user explicitly aborted (new upload / regen click).
-        // If our own fetch timeout fired, controller.signal is still un-aborted → show message.
+        // Only show a timeout message if the abort was not user-initiated.
         if (!controller.signal.aborted) {
           setPreviewError("Preview timed out — try a smaller area or lower resolution");
         }
@@ -105,18 +110,38 @@ export default function TrailPrintApp() {
         setPreviewError(e instanceof Error ? e.message : "Preview failed");
       }
     } finally {
-      if (!controller.signal.aborted) setPreviewLoading(false);
+      // Always clear previewLoading — if the controller was externally aborted
+      // (e.g. handleFile aborted a previous request), the caller has already
+      // set previewLoading=false and will set it true again for the new request.
+      setPreviewLoading(false);
     }
   }, []);
 
+  // Auto-preview on settings change (debounced 500ms).
+  // Guard: skip when fileId just changed (handleFile already triggered a preview directly)
+  // and skip when debouncedSettings matches the settings used in the last preview
+  // (prevents a spurious second preview caused by the debounce timer firing after handleFile).
   useEffect(() => {
     if (!fileId) return;
     if (fileId !== lastPreviewedFileIdRef.current) {
       lastPreviewedFileIdRef.current = fileId;
       return;
     }
+    const serialized = JSON.stringify(debouncedSettings);
+    if (serialized === lastPreviewedSettingsRef.current) return;
+    lastPreviewedSettingsRef.current = serialized;
     handlePreview(fileId, debouncedSettings);
   }, [debouncedSettings, fileId, handlePreview]);
+
+  // Shift keyboard focus to the first settings accordion summary after a file is
+  // loaded. useEffect with [fileId] is more reliable than setTimeout because it
+  // fires after React has committed the new DOM, regardless of render timing.
+  useEffect(() => {
+    if (fileId && fileJustLoadedRef.current) {
+      fileJustLoadedRef.current = false;
+      firstSummaryRef.current?.focus();
+    }
+  }, [fileId]);
 
   const clearPoll = useCallback(() => {
     if (pollRef.current) {
@@ -193,9 +218,12 @@ export default function TrailPrintApp() {
       const res = await uploadFile(file);
       setFileId(res.file_id);
       setTrackStats(res.track_stats);
-      // Shift keyboard focus to the first settings summary after controls appear
-      setTimeout(() => firstSummaryRef.current?.focus(), 80);
+      // Signal the focus effect that a new file was just loaded
+      fileJustLoadedRef.current = true;
       await handlePreview(res.file_id, settings);
+      // Record the settings used so the debounce effect can avoid a redundant
+      // second preview if the debounce timer fires shortly after this upload.
+      lastPreviewedSettingsRef.current = JSON.stringify(settings);
     } catch (e: unknown) {
       setUploadError(e instanceof Error ? e.message : "Upload failed");
     } finally {
@@ -204,7 +232,10 @@ export default function TrailPrintApp() {
   }, [settings, handlePreview, clearPoll]);
 
   const handleRegenerate = useCallback(() => {
-    if (fileId) handlePreview(fileId, settings);
+    if (fileId) {
+      lastPreviewedSettingsRef.current = JSON.stringify(settings);
+      handlePreview(fileId, settings);
+    }
   }, [fileId, settings, handlePreview]);
 
   const updateSetting = <K extends keyof GenerationSettings>(
@@ -249,6 +280,7 @@ export default function TrailPrintApp() {
     } catch {
       sessionStorage.removeItem(SESSION_KEY);
     }
+  // _startPolling is stable (useCallback with [clearPoll], clearPoll with []).
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -308,8 +340,19 @@ export default function TrailPrintApp() {
         <label
           htmlFor="file-input"
           className={`upload-zone${isDragging ? " dragging" : ""}${fileId ? " has-file" : ""}`}
-          onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragging(false); }}
+          onDragEnter={(e) => { e.preventDefault(); setIsDragging(true); }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            // Only show drag-active styling when actual files are being dragged
+            // (not links, text, or other non-file draggable content).
+            if (e.dataTransfer.types.includes("Files")) setIsDragging(true);
+          }}
+          onDragLeave={(e) => {
+            // Use instanceof check rather than a type cast to avoid bypassing TypeScript safety
+            const related = e.relatedTarget;
+            if (related instanceof Node && e.currentTarget.contains(related)) return;
+            setIsDragging(false);
+          }}
           onDrop={onDrop}
           aria-label="Drop a GPX or IGC file here, or press Enter to browse"
         >
@@ -374,8 +417,10 @@ export default function TrailPrintApp() {
                   autoComplete="off"
                   value={settings.trail_name ?? ""}
                   onChange={(e) => {
-                    const v = e.target.value;
-                    updateSetting("trail_name", v.replace(/[^a-zA-Z0-9 _\-\.]/g, ""));
+                    // No client-side character filter — the backend schema validates
+                    // the pattern (ASCII printable chars). Users with non-ASCII names
+                    // will see a server validation error rather than silent stripping.
+                    updateSetting("trail_name", e.target.value);
                   }}
                 />
               </label>
@@ -399,18 +444,27 @@ export default function TrailPrintApp() {
               </label>
               <label htmlFor="size-mm">Size (mm)
                 <input id="size-mm" type="number" min={5} max={10000} step={1} value={settings.obj_size_mm}
-                  onChange={(e) => updateSetting("obj_size_mm", Math.max(5, Math.min(10000, +e.target.value || 100)))} />
+                  onChange={(e) => {
+                    const n = parseFloat(e.target.value);
+                    updateSetting("obj_size_mm", Math.max(5, Math.min(10000, isNaN(n) ? 100 : n)));
+                  }} />
               </label>
               {settings.shape === "SQUARE" && (
                 <label htmlFor="rect-height">Rectangle Height (mm)
                   <input id="rect-height" type="number" min={5} max={10000} step={1} value={settings.rectangle_height ?? 100}
-                    onChange={(e) => updateSetting("rectangle_height", Math.max(5, Math.min(10000, +e.target.value || 100)))} />
+                    onChange={(e) => {
+                      const n = parseFloat(e.target.value);
+                      updateSetting("rectangle_height", Math.max(5, Math.min(10000, isNaN(n) ? 100 : n)));
+                    }} />
                 </label>
               )}
               {settings.shape === "ELLIPSE" && (
                 <label htmlFor="ellipse-ratio">Ellipse Ratio (0.1–3)
                   <input id="ellipse-ratio" type="number" min={0.1} max={3} step={0.05} value={settings.ellipse_ratio ?? 0.75}
-                    onChange={(e) => updateSetting("ellipse_ratio", Math.max(0.1, Math.min(3, +e.target.value || 0.75)))} />
+                    onChange={(e) => {
+                      const n = parseFloat(e.target.value);
+                      updateSetting("ellipse_ratio", Math.max(0.1, Math.min(3, isNaN(n) ? 0.75 : n)));
+                    }} />
                 </label>
               )}
               <label htmlFor="rotation-range">Rotation (°)
@@ -420,7 +474,10 @@ export default function TrailPrintApp() {
                   min={-180} max={180}
                   value={settings.shape_rotation ?? 0}
                   aria-valuetext={`${settings.shape_rotation ?? 0} degrees`}
-                  onChange={(e) => updateSetting("shape_rotation", +e.target.value || 0)}
+                  onChange={(e) => {
+                    const n = parseFloat(e.target.value);
+                    updateSetting("shape_rotation", isNaN(n) ? 0 : n);
+                  }}
                 />
                 <span style={{ fontVariantNumeric: "tabular-nums" }}>{settings.shape_rotation ?? 0}°</span>
               </label>
@@ -430,13 +487,16 @@ export default function TrailPrintApp() {
               <summary>Terrain</summary>
               <label htmlFor="elev-scale">Elevation Scale
                 <input id="elev-scale" type="number" min={0.01} max={100} step={0.1} value={settings.elevation_scale}
-                  onChange={(e) => updateSetting("elevation_scale", Math.max(0.01, Math.min(100, +e.target.value || 1.0)))} />
+                  onChange={(e) => {
+                    const n = parseFloat(e.target.value);
+                    updateSetting("elevation_scale", Math.max(0.01, Math.min(100, isNaN(n) ? 1.0 : n)));
+                  }} />
               </label>
-              <label htmlFor="resolution-range">Resolution (1–8)
+              <label htmlFor="resolution-range">Resolution (1–6)
                 <input
                   id="resolution-range"
                   type="range"
-                  min={1} max={8}
+                  min={1} max={6}
                   value={settings.num_subdivisions}
                   aria-valuetext={`${settings.num_subdivisions} subdivisions`}
                   onChange={(e) => updateSetting("num_subdivisions", +e.target.value)}
@@ -448,7 +508,10 @@ export default function TrailPrintApp() {
               </p>
               <label htmlFor="min-thick">Min Thickness (mm)
                 <input id="min-thick" type="number" min={0.5} max={50} step={0.5} value={settings.min_thickness}
-                  onChange={(e) => updateSetting("min_thickness", Math.max(0.5, Math.min(50, +e.target.value || 2.0)))} />
+                  onChange={(e) => {
+                    const n = parseFloat(e.target.value);
+                    updateSetting("min_thickness", Math.max(0.5, Math.min(50, isNaN(n) ? 2.0 : n)));
+                  }} />
               </label>
             </details>
 
@@ -456,7 +519,10 @@ export default function TrailPrintApp() {
               <summary>Trail</summary>
               <label htmlFor="path-thick">Path Thickness (mm)
                 <input id="path-thick" type="number" min={0.1} max={5} step={0.1} value={settings.path_thickness}
-                  onChange={(e) => updateSetting("path_thickness", Math.max(0.1, Math.min(5, +e.target.value || 1.2)))} />
+                  onChange={(e) => {
+                    const n = parseFloat(e.target.value);
+                    updateSetting("path_thickness", Math.max(0.1, Math.min(5, isNaN(n) ? 1.2 : n)));
+                  }} />
               </label>
             </details>
 
@@ -589,6 +655,19 @@ export default function TrailPrintApp() {
               >
                 {isExporting ? "Exporting…" : `Generate ${exportFormat}`}
               </button>
+              {isExporting && (
+                <button
+                  type="button"
+                  className="btn-export"
+                  onClick={() => {
+                    clearPoll();
+                    sessionStorage.removeItem(SESSION_KEY);
+                    setJobStatus(null);
+                  }}
+                >
+                  Cancel
+                </button>
+              )}
             </div>
           )}
 
@@ -631,18 +710,26 @@ export default function TrailPrintApp() {
                   <span aria-hidden="true">↺ </span>Retry
                 </button>
               )}
+              {jobStatus.status === "done" && jobStatus.files.length === 0 && (
+                <span>Export complete but no files were returned — please retry.</span>
+              )}
               {jobStatus.status === "done" &&
-                jobStatus.files.map((f) => (
-                  <a
-                    key={f}
-                    href={downloadUrl(jobStatus.job_id, f)}
-                    download={f}
-                    className="btn-download"
-                    title={f}
-                  >
-                    <span aria-hidden="true">↓</span>{f}
-                  </a>
-                ))}
+                jobStatus.files.map((f) => {
+                  // Sanitise server-provided filenames before using as the download
+                  // attribute and display text — guards against adversarial filenames.
+                  const safeName = f.replace(/[^a-zA-Z0-9._\- ]/g, "_").slice(0, 128);
+                  return (
+                    <a
+                      key={safeName}
+                      href={downloadUrl(jobStatus.job_id, f)}
+                      download={safeName}
+                      className="btn-download"
+                      title={safeName}
+                    >
+                      <span aria-hidden="true">↓</span>{safeName}
+                    </a>
+                  );
+                })}
             </div>
           )}
         </footer>

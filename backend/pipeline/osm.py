@@ -192,7 +192,7 @@ def fetch_osm_data(
             data = resp.json()
             # Atomic write to avoid partial reads by concurrent requests
             tmp = cache_path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data))
+            tmp.write_text(json.dumps(data), encoding="utf-8")
             tmp.replace(cache_path)
             return data
         except requests.HTTPError as exc:

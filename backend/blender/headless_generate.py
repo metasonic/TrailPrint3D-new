@@ -21,7 +21,7 @@ def main():
         print("Usage: blender --background --python headless_generate.py -- <config.json>")
         sys.exit(1)
 
-    config = json.loads(config_path.read_text())
+    config = json.loads(config_path.read_text(encoding="utf-8"))
     settings = config["settings"]
     addon_src_dir = config["addon_src_dir"]
     gpx_path = config["gpx_path"]
@@ -81,7 +81,7 @@ def main():
     tp3d.setdefault("maxLat", 0.0)
     tp3d.setdefault("minLon", 0.0)
     tp3d.setdefault("maxLon", 0.0)
-    tp3d.setdefault("exportformat", "STL")
+    tp3d.setdefault("exportformat", export_format)  # must match requested format, not hardcoded STL
     tp3d.setdefault("opentopoAdress", "https://api.opentopodata.org/v1/")
     tp3d.setdefault("currentMap", None)
     tp3d.setdefault("currentTrail", None)
@@ -153,8 +153,10 @@ def main():
         for key, value in tp3d.items():
             try:
                 setattr(pg, key, value)
-            except (AttributeError, TypeError):
-                pass  # read-only RNA props or type mismatch — skip
+            except (AttributeError, TypeError) as exc:
+                # read-only RNA props or type mismatch — log at DEBUG so misconfigured
+                # keys (e.g. camelCase vs snake_case) are visible without spamming INFO
+                print(f"DEBUG: Skipped addon property {key!r}: {exc}", flush=True)
     except Exception as exc:
         print(f"STATUS: FAILED — Addon registration failed: {exc}", flush=True)
         sys.exit(1)

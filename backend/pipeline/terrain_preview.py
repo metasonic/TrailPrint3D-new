@@ -94,13 +94,13 @@ def build_terrain_mesh(
 
     # Build vertices — x,y,z all in mm-equivalent world units so min_thickness
     # (also in mm) can be subtracted directly in _add_floor.
-    verts = np.zeros((n * n, 3), dtype=np.float64)
-    for i in range(n):
-        for j in range(n):
-            idx = i * n + j
-            verts[idx, 0] = xs[j] * scale_hor
-            verts[idx, 1] = ys[i] * scale_hor
-            verts[idx, 2] = elev_grid[i, j] / 1000.0 * auto_scale * config.elevation_scale
+    # Vectorised: np.tile(xs, n) gives [xs[0]..xs[n-1]] repeated n times (one per row i),
+    # np.repeat(ys, n) gives ys[i] for each column j in row i — matching the old i/j loops.
+    verts = np.column_stack([
+        np.tile(xs, n) * scale_hor,
+        np.repeat(ys, n) * scale_hor,
+        elev_grid.ravel() / 1000.0 * auto_scale * config.elevation_scale,
+    ])
 
     # Build faces (two triangles per quad)
     faces = []

@@ -91,7 +91,7 @@ def _save_cache(config: ElevationConfig) -> None:
     # Atomic write: write to temp file then replace to avoid partial reads
     try:
         tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps(snapshot))
+        tmp.write_text(json.dumps(snapshot), encoding="utf-8")
         tmp.replace(p)
     except Exception:
         pass
@@ -287,9 +287,10 @@ def get_elevation_terrain_tiles(
             raw = _fetch_tile(zoom, tx, ty, config)
             try:
                 tile_cache[(tx, ty)] = _parse_png_rgb(raw)
-            except Exception:
-                logger.warning("Malformed terrain tile %d/%d/%d; using zero elevation", zoom, tx, ty)
-                tile_cache[(tx, ty)] = [[(0, 0, 0)] * 256 for _ in range(256)]
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Failed to parse terrain tile {zoom}/{tx}/{ty}: {exc}"
+                ) from exc
         rgb_grid = tile_cache[(tx, ty)]
         for idx, lat, lon in entries:
             px, py = _lonlat_to_pixelxy(lon, lat, zoom)

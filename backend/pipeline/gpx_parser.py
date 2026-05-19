@@ -12,6 +12,12 @@ from typing import Optional
 try:
     import defusedxml.ElementTree as ET
 except ImportError:
+    import logging as _log
+    _log.getLogger(__name__).warning(
+        "defusedxml not installed — falling back to stdlib xml.etree.ElementTree "
+        "which is vulnerable to XML bomb (billion laughs) attacks. "
+        "Install defusedxml for security: pip install defusedxml"
+    )
     import xml.etree.ElementTree as ET  # type: ignore[no-redef]
 
 

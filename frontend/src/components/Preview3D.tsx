@@ -40,7 +40,9 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
     if (!mountRef.current) return;
     const el = mountRef.current;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    // powerPreference: "high-performance" selects the discrete GPU on dual-GPU
+    // systems (MacBooks, gaming laptops) for significantly better terrain rendering.
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(el.clientWidth, el.clientHeight);
     renderer.setClearColor(0x0d0d1a, 1); // explicit clear avoids transparency flicker on canvas resize
@@ -83,7 +85,9 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
     controls.minDistance = 5;
     controls.maxDistance = 2000;
     controls.maxPolarAngle = Math.PI * 0.75;
-    controls.listenToKeyEvents(renderer.domElement);
+    // Attach key events to the mount div (which has tabIndex={0}) so arrow-key pan
+    // actually works — the canvas element has no tabIndex and never receives focus.
+    controls.listenToKeyEvents(el);
     controlsRef.current = controls;
 
     let animId: number;
@@ -94,8 +98,12 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
     }
     animId = requestAnimationFrame(animate);
 
+    // Guard flag: prevents the ResizeObserver callback from operating on a
+    // disposed renderer if the observer fires after component unmount.
+    let disposed = false;
+
     const ro = new ResizeObserver(() => {
-      if (!mountRef.current) return;
+      if (disposed || !mountRef.current) return;
       const w = mountRef.current.clientWidth;
       const h = mountRef.current.clientHeight;
       renderer.setSize(w, h);
@@ -105,10 +113,13 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
     ro.observe(el);
 
     return () => {
+      disposed = true;
       cancelAnimationFrame(animId);
       ro.disconnect();
       controls.dispose();
       if (modelGroupRef.current) {
+        // Remove from scene before disposing to prevent dangling references
+        scene.remove(modelGroupRef.current);
         const seenMats = new Set<THREE.Material>();
         modelGroupRef.current.traverse((child) => {
           if ((child as THREE.Mesh).isMesh) {
@@ -128,10 +139,12 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
         else (mat as THREE.Material).dispose();
         gridRef.current = null;
       }
-      // Dispose shadow map GPU resource (WebGLRenderTarget) to prevent GPU memory leak
+      // Dispose shadow map GPU resource (WebGLRenderTarget) to prevent GPU memory leak.
+      // fill and ambient have no shadow maps; only sun.shadow.map needs explicit disposal.
       sun.shadow.map?.dispose();
       // Remove lights from scene before renderer disposal
       scene.remove(ambient, sun, fill);
+      scene.dispose();
       renderer.dispose();
       el.removeChild(renderer.domElement);
       // Null refs so any stale async callbacks don't operate on disposed objects
@@ -156,7 +169,9 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
 
     if (!glbUrl) return;
 
-    // Cancellation flag: if glbUrl changes before this load completes, ignore the stale callback
+    // Cancellation flag: if glbUrl changes before this load completes, ignore the stale callback.
+    // Note: GLTFLoader does not support AbortSignal — the network request continues but
+    // the stale result is discarded and its resources disposed below.
     let cancelled = false;
 
     const loader = new GLTFLoader();
@@ -180,15 +195,18 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
         }
 
         const group = new THREE.Group();
-        const seenOrigMats = new Set<THREE.Material>();
+
+        // Collect old materials from the full traversal first, assign new materials,
+        // then dispose the old ones — avoids disposing a material that is still
+        // referenced by another mesh in the same shared-material GLTF scene.
+        const oldMats: THREE.Material[] = [];
         gltf.scene.traverse((child) => {
           if ((child as THREE.Mesh).isMesh) {
             const mesh = child as THREE.Mesh;
             mesh.castShadow = true;
             mesh.receiveShadow = true;
-            (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => {
-              if (!seenOrigMats.has(m)) { seenOrigMats.add(m); m.dispose(); }
-            });
+            const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            oldMats.push(...mats);
             mesh.material =
               child.name === "trail"
                 // Slightly metallic trail pops against the matte terrain
@@ -196,6 +214,11 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
                 : new THREE.MeshStandardMaterial({ color: 0xa8aab4, roughness: 0.65, metalness: 0.05 });
           }
         });
+        const seenOrigMats = new Set<THREE.Material>();
+        for (const m of oldMats) {
+          if (!seenOrigMats.has(m)) { seenOrigMats.add(m); m.dispose(); }
+        }
+
         group.add(gltf.scene);
         sceneRef.current!.add(group);
         modelGroupRef.current = group;
@@ -229,6 +252,7 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
         ref={mountRef}
         tabIndex={0}
         role="application"
+        aria-roledescription="3D terrain viewer"
         aria-label={ariaLabel}
         style={{ width: "100%", height: "100%", touchAction: "none" }}
       />

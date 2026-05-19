@@ -37,8 +37,8 @@ def convert_to_world(
     scale_hor: float = 1.0,
 ) -> tuple[float, float, float]:
     """Convert geographic coordinates to Blender/world-space (Z-up)."""
-    x = R * math.radians(lon) * scale_hor
-    y = R * math.log(math.tan(math.pi / 4 + math.radians(lat) / 2)) * scale_hor
+    x = mercator_x(lon) * scale_hor
+    y = mercator_y(lat) * scale_hor  # clamps lat to ±85.051129° — avoids log(tan(π/2))=inf
     z = elevation / 1000.0 * scale_elevation * auto_scale
     return (x, y, z)
 
@@ -51,8 +51,8 @@ def convert_to_neutral(
     auto_scale: float = 1.0,
 ) -> tuple[float, float, float]:
     """Mercator projection without horizontal scale factor."""
-    x = R * math.radians(lon)
-    y = R * math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))
+    x = mercator_x(lon)
+    y = mercator_y(lat)  # clamps lat to ±85.051129°
     z = elevation / 1000.0 * scale_elevation * auto_scale
     return (x, y, z)
 

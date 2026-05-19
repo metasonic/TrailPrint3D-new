@@ -11,6 +11,7 @@ export default defineConfig({
     host: "0.0.0.0",
   },
   vite: {
+    // Dev-server proxy only — in production the browser hits PUBLIC_API_URL directly.
     server: {
       proxy: {
         "/api": { target: "http://localhost:8000", changeOrigin: true },
