@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,12 +14,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    cfg = get_settings()
+    cfg.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    for sub in ("uploads", "preview", "exports", "jobs"):
+        (cfg.OUTPUT_DIR / sub).mkdir(exist_ok=True)
+    cfg.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    for sub in ("elevation", "tiles", "osm"):
+        (cfg.CACHE_DIR / sub).mkdir(exist_ok=True)
+    yield
+    await export.close_pool()
+
+
 cfg = get_settings()
 
 app = FastAPI(
     title="TrailPrint3D API",
     description="Convert GPX tracks into 3D-printable terrain meshes",
     version="1.0.0",
+    lifespan=lifespan,
     # Disable interactive docs in production — they enumerate all endpoints
     docs_url="/docs" if cfg.ENVIRONMENT == "development" else None,
     redoc_url="/redoc" if cfg.ENVIRONMENT == "development" else None,
@@ -68,4 +84,10 @@ app.include_router(export.router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    try:
+        r = export._get_redis()
+        await r.ping()
+        redis_ok = True
+    except Exception:
+        redis_ok = False
+    return {"status": "ok" if redis_ok else "degraded", "redis": redis_ok}

@@ -7,9 +7,12 @@ for simplicity. Wire this task into the router if you need Celery-backed preview
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from .celery_app import app
+
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
 @app.task(bind=True, name="tasks.preview_task.generate_preview")
@@ -18,6 +21,9 @@ def generate_preview(self, file_id: str, settings_dict: dict, out_dir: str) -> d
     from backend.models.schemas import GenerationSettings
     from backend.pipeline.elevation import ElevationConfig
     from backend.pipeline.preview_export import generate_preview as _generate
+
+    if not _UUID_RE.match(file_id):
+        return {"status": "failed", "error": "Invalid file_id"}
 
     cfg = get_settings()
     settings = GenerationSettings(**settings_dict)

@@ -189,7 +189,10 @@ def export_model(
                         error=f"Generation timed out after {BLENDER_TIMEOUT}s")
             return {"status": "failed"}
 
-        proc.wait()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
 
         # Write log and parse progress/status messages for Redis
         log_file = job_dir / "blender.log"

@@ -120,9 +120,9 @@ export default function TrailPrintApp() {
   const _startPolling = useCallback((job_id: string, gen: number) => {
     let pollAttempts = 0;
     let consecutiveNetworkErrors = 0;
-    pollRef.current = setInterval(async () => {
+    const id = setInterval(async () => {
       if (gen !== exportGenRef.current) {
-        clearInterval(pollRef.current ?? undefined);
+        clearInterval(id);
         return;
       }
       pollAttempts++;
@@ -164,6 +164,7 @@ export default function TrailPrintApp() {
         }
       }
     }, 2000);
+    pollRef.current = id;
   }, [clearPoll]);
 
   const handleFile = useCallback(async (file: File) => {
@@ -349,7 +350,7 @@ export default function TrailPrintApp() {
         {fileId && (
           <>
             <details className="settings-group">
-              <summary ref={firstSummaryRef as any}>Trail Name</summary>
+              <summary ref={firstSummaryRef}>Trail Name</summary>
               <label htmlFor="trail-name">
                 Name
                 <input

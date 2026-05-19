@@ -7,11 +7,15 @@ Coordinate transform: Blender Z-up → Three.js Y-up
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 import numpy as np
 import trimesh
 import trimesh.transformations as tf
+
+if TYPE_CHECKING:
+    from ..models.schemas import GenerationSettings
+    from .elevation import ElevationConfig
 
 
 # Rotation matrix: Blender Z-up → Three.js Y-up (-90° around X)
@@ -74,10 +78,10 @@ def export_preview_glb(
 
 def generate_preview(
     gpx_path: Path,
-    settings,  # GenerationSettings
+    settings: "GenerationSettings",
     out_path: Path,
-    elev_config,  # ElevationConfig
-    progress_cb=None,
+    elev_config: "ElevationConfig",
+    progress_cb: Optional[Callable[[int], None]] = None,
 ) -> dict:
     """
     Full preview generation pipeline:
@@ -89,13 +93,15 @@ def generate_preview(
     Returns terrain stats dict.
     """
     from .gpx_parser import read_track_file, compute_track_stats, flatten_segments
-    from .terrain_preview import TerrainConfig, build_terrain_mesh
+    from .terrain_preview import TerrainConfig, build_terrain_mesh, _clip_to_shape
     from .trail_preview import build_trail_mesh, compute_scale_hor
     from .geo import bbox_for_track
 
     # 1. Parse GPX
     segments = read_track_file(gpx_path)
     stats = compute_track_stats(segments)
+    if stats.point_count == 0:
+        raise ValueError("Track file contains no valid track points")
     track_points = flatten_segments(segments)
 
     # 2. Determine bbox with padding
@@ -128,7 +134,7 @@ def generate_preview(
 
     terrain = build_terrain_mesh(tconf, elev_config, progress_cb)
 
-    # 4. Build trail tube
+    # 4. Build trail tube, then clip it to the same shape boundary as the terrain
     scale_hor = compute_scale_hor(
         bbox[0], bbox[1], bbox[2], bbox[3], settings.obj_size_mm
     )
@@ -142,6 +148,8 @@ def generate_preview(
         scale_elevation=settings.elevation_scale,
         overwrite_elevation=settings.overwrite_path_elevation,
     )
+    if trail is not None and len(trail.vertices) > 0:
+        trail = _clip_to_shape(trail, tconf)
 
     # 5. Export GLB
     export_preview_glb(terrain, trail, out_path)

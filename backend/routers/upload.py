@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import uuid
@@ -62,10 +63,12 @@ async def upload_gpx(file: UploadFile = File(...)):
     dest.write_bytes(content)
 
     try:
-        from ..pipeline.gpx_parser import read_track_file, compute_track_stats
+        def _parse(p):
+            from ..pipeline.gpx_parser import read_track_file, compute_track_stats
+            segs = read_track_file(p)
+            return segs, compute_track_stats(segs)
 
-        segments = read_track_file(dest)
-        raw_stats = compute_track_stats(segments)
+        segments, raw_stats = await asyncio.to_thread(_parse, dest)
         if raw_stats.point_count == 0:
             raise HTTPException(status_code=422, detail="Track file contains no valid track points")
         stats = TrackStats(

@@ -6,7 +6,7 @@ import re
 import uuid
 from pathlib import Path
 
-import redis as _redis
+import redis.asyncio as _redis
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
@@ -32,6 +32,13 @@ def _get_redis() -> _redis.Redis:
     return _redis.Redis(connection_pool=_pool)
 
 
+async def close_pool() -> None:
+    global _pool
+    if _pool is not None:
+        await _pool.aclose()
+        _pool = None
+
+
 def _validate_uuid(value: str, field: str) -> None:
     if not _UUID_RE.match(value):
         raise HTTPException(status_code=400, detail=f"Invalid {field}")
@@ -55,11 +62,11 @@ async def start_export(body: ExportRequest):
 
     try:
         r = _get_redis()
-        r.hset(
+        await r.hset(
             f"job:{job_id}",
             mapping={"status": "pending", "progress": "0", "message": "Queued", "files": "[]"},
         )
-        r.expire(f"job:{job_id}", 86400)
+        await r.expire(f"job:{job_id}", 86400)
     except Exception:
         logger.exception("Redis unavailable when creating job %s", job_id)
         raise HTTPException(status_code=503, detail="Queue temporarily unavailable")
@@ -74,7 +81,7 @@ async def start_export(body: ExportRequest):
     except Exception:
         logger.exception("Failed to enqueue export task for job %s", job_id)
         try:
-            _get_redis().delete(f"job:{job_id}")
+            await _get_redis().delete(f"job:{job_id}")
         except Exception:
             pass
         raise HTTPException(status_code=503, detail="Queue temporarily unavailable")
@@ -87,7 +94,7 @@ async def get_job_status(job_id: str):
     _validate_uuid(job_id, "job_id")
     try:
         r = _get_redis()
-        data = r.hgetall(f"job:{job_id}")
+        data = await r.hgetall(f"job:{job_id}")
     except Exception:
         logger.exception("Redis unavailable when fetching job %s", job_id)
         raise HTTPException(status_code=503, detail="Queue temporarily unavailable")

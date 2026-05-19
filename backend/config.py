@@ -43,14 +43,4 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    s = Settings()
-    s.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    (s.OUTPUT_DIR / "uploads").mkdir(exist_ok=True)
-    (s.OUTPUT_DIR / "preview").mkdir(exist_ok=True)
-    (s.OUTPUT_DIR / "exports").mkdir(exist_ok=True)
-    (s.OUTPUT_DIR / "jobs").mkdir(exist_ok=True)
-    s.CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    (s.CACHE_DIR / "elevation").mkdir(exist_ok=True)
-    (s.CACHE_DIR / "tiles").mkdir(exist_ok=True)
-    (s.CACHE_DIR / "osm").mkdir(exist_ok=True)
-    return s
+    return Settings()

@@ -180,7 +180,11 @@ def _parse_png_rgb(png_bytes: bytes) -> list[list[tuple[int, int, int]]]:
             idat += data
         elif chunk == b"IEND":
             break
-    raw = zlib.decompress(idat)
+    # 2MB cap prevents decompression of maliciously crafted tiles (zip bomb)
+    _obj = zlib.decompressobj()
+    raw = _obj.decompress(idat, max_length=2 * 1024 * 1024)
+    if _obj.unconsumed_tail:
+        raise ValueError("PNG IDAT data exceeds decompression size limit")
     # RGB = 3 bytes/pixel, RGBA = 4 bytes/pixel
     n_ch = 3 if color_type == 2 else 4
     stride = n_ch * width
@@ -255,12 +259,14 @@ def get_elevation_terrain_tiles(
         haversine(max_lat, min_lon, max_lat, max_lon) * 1000,
     )
     hor_verts = 1 + 2 ** (config.num_subdivisions + 1)
-    vert_dist = realdist / hor_verts if hor_verts else realdist
+    # Intervals between vertices, not vertex count
+    vert_dist = realdist / (hor_verts - 1) if hor_verts > 1 else realdist
 
+    lat_center = (min_lat + max_lat) / 2
+    cos_lat = math.cos(math.radians(lat_center))
     zoom = 2
-    # Initialise to the actual resolution at zoom 2 (156543 / 2^zoom) so the
-    # loop selects the optimal zoom without fetching 4× extra tiles.
-    tile_m_per_px = 156543.0 / (2 ** zoom)
+    # Tile resolution at the track's latitude: 156543 m/px at zoom 0, halved per zoom level
+    tile_m_per_px = 156543.0 * cos_lat / (2 ** zoom)
     while tile_m_per_px > vert_dist and zoom < 15:
         zoom += 1
         tile_m_per_px /= 2
