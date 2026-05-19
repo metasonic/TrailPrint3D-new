@@ -123,7 +123,9 @@ def _lonlat_to_tilexy(lon: float, lat: float, zoom: int) -> tuple[int, int]:
     n = 2.0 ** zoom
     x = int((lon + 180.0) / 360.0 * n)
     y = int((1.0 - math.log(math.tan(lat_rad) + 1.0 / math.cos(lat_rad)) / math.pi) / 2.0 * n)
-    return x, y
+    # Clamp to valid tile range [0, 2^zoom - 1] — lon=180 produces x=2^zoom (out of bounds)
+    max_tile = int(n) - 1
+    return min(x, max_tile), min(y, max_tile)
 
 
 def _lonlat_to_pixelxy(lon: float, lat: float, zoom: int) -> tuple[int, int]:
@@ -334,6 +336,8 @@ def get_elevation_opentopodata(
         resp.raise_for_status()
         data = resp.json()
         for o, result in enumerate(data["results"]):
+            if o >= len(batch):
+                break  # guard against API returning more results than requested
             elev = result.get("elevation") or 0.0
             _set_cached(batch[o][0], batch[o][1], elev, "otd")
             elevations[indices[i + o]] = elev

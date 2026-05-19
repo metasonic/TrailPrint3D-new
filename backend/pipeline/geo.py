@@ -23,6 +23,8 @@ def mercator_x(lon: float) -> float:
 
 
 def mercator_y(lat: float) -> float:
+    # Clamp to Web Mercator valid range to avoid log(tan(pi/2)) = inf at lat=±90
+    lat = max(-85.051129, min(85.051129, lat))
     return R * math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))
 
 

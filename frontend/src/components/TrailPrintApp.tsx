@@ -92,7 +92,14 @@ export default function TrailPrintApp() {
         setGlbUrl(resolvePreviewUrl(res.glb_url));
       }
     } catch (e: unknown) {
-      if (e instanceof Error && e.name === "AbortError") return;
+      if (e instanceof Error && e.name === "AbortError") {
+        // Only suppress silently if the user explicitly aborted (new upload / regen click).
+        // If our own fetch timeout fired, controller.signal is still un-aborted → show message.
+        if (!controller.signal.aborted) {
+          setPreviewError("Preview timed out — try a smaller area or lower resolution");
+        }
+        return;
+      }
       if (!controller.signal.aborted) {
         setPreviewError(e instanceof Error ? e.message : "Preview failed");
       }
@@ -123,6 +130,7 @@ export default function TrailPrintApp() {
     const id = setInterval(async () => {
       if (gen !== exportGenRef.current) {
         clearInterval(id);
+        if (pollRef.current === id) pollRef.current = null;
         return;
       }
       pollAttempts++;

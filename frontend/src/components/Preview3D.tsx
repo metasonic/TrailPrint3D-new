@@ -108,8 +108,15 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
       ro.disconnect();
       controls.dispose();
       if (modelGroupRef.current) {
+        const seenMats = new Set<THREE.Material>();
         modelGroupRef.current.traverse((child) => {
-          if ((child as THREE.Mesh).isMesh) disposeMesh(child as THREE.Mesh);
+          if ((child as THREE.Mesh).isMesh) {
+            const mesh = child as THREE.Mesh;
+            mesh.geometry.dispose();
+            (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => {
+              if (!seenMats.has(m)) { seenMats.add(m); m.dispose(); }
+            });
+          }
         });
         modelGroupRef.current = null;
       }
@@ -120,6 +127,10 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
         else (mat as THREE.Material).dispose();
         gridRef.current = null;
       }
+      // Dispose shadow map GPU resource (WebGLRenderTarget) to prevent GPU memory leak
+      sun.shadow.map?.dispose();
+      // Remove lights from scene before renderer disposal
+      scene.remove(ambient, sun, fill);
       renderer.dispose();
       el.removeChild(renderer.domElement);
     };
@@ -147,27 +158,29 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
       glbUrl,
       (gltf) => {
         if (cancelled) {
+          const seenMats = new Set<THREE.Material>();
           gltf.scene.traverse((child) => {
             if ((child as THREE.Mesh).isMesh) {
               const mesh = child as THREE.Mesh;
               mesh.geometry.dispose();
-              const mat = mesh.material;
-              if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
-              else mat.dispose();
+              (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => {
+                if (!seenMats.has(m)) { seenMats.add(m); m.dispose(); }
+              });
             }
           });
           return;
         }
 
         const group = new THREE.Group();
+        const seenOrigMats = new Set<THREE.Material>();
         gltf.scene.traverse((child) => {
           if ((child as THREE.Mesh).isMesh) {
             const mesh = child as THREE.Mesh;
             mesh.castShadow = true;
             mesh.receiveShadow = true;
-            const origMat = mesh.material;
-            if (Array.isArray(origMat)) origMat.forEach((m) => m.dispose());
-            else origMat.dispose();
+            (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => {
+              if (!seenOrigMats.has(m)) { seenOrigMats.add(m); m.dispose(); }
+            });
             mesh.material =
               child.name === "trail"
                 // Slightly metallic trail pops against the matte terrain

@@ -62,11 +62,13 @@ async def start_export(body: ExportRequest):
 
     try:
         r = _get_redis()
-        await r.hset(
+        pipe = r.pipeline()
+        pipe.hset(
             f"job:{job_id}",
             mapping={"status": "pending", "progress": "0", "message": "Queued", "files": "[]"},
         )
-        await r.expire(f"job:{job_id}", 86400)
+        pipe.expire(f"job:{job_id}", 86400)
+        await pipe.execute()
     except Exception:
         logger.exception("Redis unavailable when creating job %s", job_id)
         raise HTTPException(status_code=503, detail="Queue temporarily unavailable")

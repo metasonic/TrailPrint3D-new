@@ -7,7 +7,6 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
 
 from ..config import get_settings
 from ..models.schemas import TrackStats, UploadResponse
@@ -49,9 +48,13 @@ async def upload_gpx(file: UploadFile = File(...)):
         chunks.append(chunk)
     content = b"".join(chunks)
 
-    # Magic-byte check: GPX must open with XML; IGC must open with a record type letter
+    # Magic-byte check: GPX must open with XML; IGC must open with a record type letter.
+    # Strip UTF-8 BOM (0xEF 0xBB 0xBF) before checking — BOM-prefixed UTF-8 is valid XML.
     if ext == ".gpx":
-        header = content.lstrip()
+        header = content
+        if header.startswith(b"\xef\xbb\xbf"):
+            header = header[3:]
+        header = header.lstrip()
         if not (header.startswith(b"<?xml") or header.startswith(b"<gpx")):
             raise HTTPException(status_code=422, detail="File does not appear to be a valid GPX (XML) file")
     elif ext == ".igc":

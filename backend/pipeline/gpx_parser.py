@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import date as _date, datetime
+from datetime import date as _date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -30,8 +30,15 @@ class TrackStats:
 def _parse_points(points: list, point_type: str) -> Segment:
     segcoords: Segment = []
     for pt in points:
-        lat = float(pt.get("lat"))
-        lon = float(pt.get("lon"))
+        lat_str = pt.get("lat")
+        lon_str = pt.get("lon")
+        if lat_str is None or lon_str is None:
+            continue  # skip malformed points missing required coordinates
+        try:
+            lat = float(lat_str)
+            lon = float(lon_str)
+        except (ValueError, TypeError):
+            continue
         ele = None
         time_el = None
         for c in pt:
@@ -40,11 +47,14 @@ def _parse_points(points: list, point_type: str) -> Segment:
                 ele = c
             elif tag == "time":
                 time_el = c
-        elevation = float(ele.text) if ele is not None else 0.0
+        try:
+            elevation = float(ele.text) if ele is not None and ele.text else 0.0
+        except (ValueError, TypeError):
+            elevation = 0.0
         try:
             timestamp = (
                 datetime.fromisoformat(time_el.text.replace("Z", "+00:00"))
-                if time_el is not None
+                if time_el is not None and time_el.text
                 else None
             )
         except Exception:
@@ -97,12 +107,15 @@ def read_igc(filepath: str | Path) -> list[Segment]:
     with open(str(filepath), "r") as f:
         lines = f.readlines()
 
-    # Parse HFDTE header to get the actual flight date (DDMMYY format)
+    # Parse HFDTE header to get the actual flight date.
+    # Supports both classic (HFDTE240513) and newer (HFDTEDATE:240513,01) formats.
     for line in lines:
         line = line.strip()
         if line.startswith("HFDTE"):
             try:
-                d = line[5:11]  # DDMMYY
+                rest = line[5:].lstrip(": ")
+                # HFDTEDATE:DDMMYY,NN — drop everything after the comma
+                d = rest.split(",")[0].strip()[:6]
                 flight_date = _date(
                     2000 + int(d[4:6]), int(d[2:4]), int(d[0:2])
                 )
@@ -113,6 +126,7 @@ def read_igc(filepath: str | Path) -> list[Segment]:
     today = datetime.now().date()
     base_date = flight_date or today
 
+    prev_secs: Optional[int] = None
     for line in lines:
         if not line.startswith("B"):
             continue
@@ -121,6 +135,14 @@ def read_igc(filepath: str | Path) -> list[Segment]:
             hours = int(time_str[0:2])
             minutes = int(time_str[2:4])
             seconds = int(time_str[4:6])
+
+            # Detect midnight rollover: if time jumps backwards by more than 1 hour,
+            # the flight crossed midnight → advance base_date by one day.
+            current_secs = hours * 3600 + minutes * 60 + seconds
+            if prev_secs is not None and current_secs < prev_secs - 3600:
+                base_date = (datetime(base_date.year, base_date.month, base_date.day)
+                             + timedelta(days=1)).date()
+            prev_secs = current_secs
 
             lat_str = line[7:15]
             lat_deg = int(lat_str[0:2])

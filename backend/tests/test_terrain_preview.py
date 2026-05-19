@@ -36,9 +36,10 @@ def test_terrain_mesh_basic(monkeypatch):
     )
     ecfg = ElevationConfig(api="TERRAIN-TILES")
 
-    mesh = tm.build_terrain_mesh(config, ecfg)
+    mesh, auto_scale = tm.build_terrain_mesh(config, ecfg)
     assert len(mesh.vertices) > 0
     assert len(mesh.faces) > 0
+    assert auto_scale > 0
 
 
 def test_terrain_hex_clip_fewer_faces(monkeypatch):
@@ -57,8 +58,8 @@ def test_terrain_hex_clip_fewer_faces(monkeypatch):
     )
     ecfg = ElevationConfig(api="TERRAIN-TILES")
 
-    sq_mesh = tm.build_terrain_mesh(TerrainConfig(**base_cfg, shape="SQUARE"), ecfg)
-    hx_mesh = tm.build_terrain_mesh(TerrainConfig(**base_cfg, shape="HEXAGON"), ecfg)
+    sq_mesh, _ = tm.build_terrain_mesh(TerrainConfig(**base_cfg, shape="SQUARE"), ecfg)
+    hx_mesh, _ = tm.build_terrain_mesh(TerrainConfig(**base_cfg, shape="HEXAGON"), ecfg)
 
     # Hexagon has fewer vertices than square (corners clipped)
     assert len(hx_mesh.vertices) <= len(sq_mesh.vertices)

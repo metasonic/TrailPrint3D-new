@@ -24,11 +24,16 @@ _SAFE_FILENAME_RE = re.compile(r"^[0-9a-zA-Z_\-]+\.(stl|obj|3mf|glb)$", re.IGNOR
 BLENDER_TIMEOUT = 600  # hard cap on headless generation (seconds)
 
 
+_MAX_OUTPUT_LINES = 10_000  # cap Blender stdout to avoid OOM in worker
+
+
 def _update_job(r: _redis.Redis, job_id: str, **fields) -> None:
-    """Write job state fields into the Redis hash for this job."""
+    """Write job state fields atomically into the Redis hash for this job."""
     try:
-        r.hset(f"job:{job_id}", mapping={k: str(v) for k, v in fields.items()})
-        r.expire(f"job:{job_id}", 86400)
+        pipe = r.pipeline()
+        pipe.hset(f"job:{job_id}", mapping={k: str(v) for k, v in fields.items()})
+        pipe.expire(f"job:{job_id}", 86400)
+        pipe.execute()
     except Exception:
         logger.exception("Redis update failed for job %s", job_id)
 
@@ -171,7 +176,8 @@ def export_model(
         def _drain():
             assert proc.stdout is not None
             for line in proc.stdout:
-                output_lines.append(line)
+                if len(output_lines) < _MAX_OUTPUT_LINES:
+                    output_lines.append(line)
 
         drain_thread = threading.Thread(target=_drain, daemon=True)
         drain_thread.start()

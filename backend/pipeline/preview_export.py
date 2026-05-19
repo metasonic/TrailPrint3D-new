@@ -73,7 +73,20 @@ def export_preview_glb(
         scene.add_geometry(trail_yup, geom_name="trail", node_name="trail")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    scene.export(str(out_path), file_type="glb")
+    # Atomic write: export to a sibling temp file then rename so concurrent
+    # requests for the same file_id never serve a partially-written GLB.
+    import tempfile, os as _os
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=out_path.parent, suffix=".glb.tmp")
+    _os.close(tmp_fd)
+    try:
+        scene.export(tmp_path, file_type="glb")
+        _os.replace(tmp_path, str(out_path))
+    except Exception:
+        try:
+            _os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def generate_preview(
@@ -95,7 +108,7 @@ def generate_preview(
     from .gpx_parser import read_track_file, compute_track_stats, flatten_segments
     from .terrain_preview import TerrainConfig, build_terrain_mesh, points_inside_shape
     from .trail_preview import build_trail_mesh, compute_scale_hor
-    from .geo import bbox_for_track
+    from .geo import bbox_for_track, mercator_x, mercator_y
 
     # 1. Parse GPX
     segments = read_track_file(gpx_path)
