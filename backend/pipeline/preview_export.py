@@ -93,7 +93,7 @@ def generate_preview(
     Returns terrain stats dict.
     """
     from .gpx_parser import read_track_file, compute_track_stats, flatten_segments
-    from .terrain_preview import TerrainConfig, build_terrain_mesh, _clip_to_shape
+    from .terrain_preview import TerrainConfig, build_terrain_mesh, points_inside_shape
     from .trail_preview import build_trail_mesh, compute_scale_hor
     from .geo import bbox_for_track
 
@@ -111,7 +111,7 @@ def generate_preview(
         padding_km=2.0,
     )
 
-    # 3. Build terrain
+    # 3. Build terrain; auto_scale is the Z-scale factor used for terrain vertices
     tconf = TerrainConfig(
         min_lat=bbox[0],
         min_lon=bbox[1],
@@ -132,24 +132,35 @@ def generate_preview(
     elev_config.max_lat = bbox[2]
     elev_config.max_lon = bbox[3]
 
-    terrain = build_terrain_mesh(tconf, elev_config, progress_cb)
+    terrain, auto_scale = build_terrain_mesh(tconf, elev_config, progress_cb)
 
-    # 4. Build trail tube, then clip it to the same shape boundary as the terrain
+    # 4. Build trail tube.
+    # Filter track points to those inside the shape boundary before building so
+    # the tube is never clipped at mesh level (which would leave open non-manifold
+    # edges at the cut boundary).
     scale_hor = compute_scale_hor(
         bbox[0], bbox[1], bbox[2], bbox[3], settings.obj_size_mm
     )
     trail_pts = [(p[0], p[1], p[2]) for p in track_points]
+    if trail_pts:
+        world_xy = np.array(
+            [[mercator_x(lon) * scale_hor, mercator_y(lat) * scale_hor]
+             for lat, lon, _ in trail_pts],
+            dtype=np.float64,
+        )
+        inside = points_inside_shape(world_xy, tconf)
+        trail_pts = [p for p, ok in zip(trail_pts, inside) if ok]
+
     trail = build_trail_mesh(
         trail_pts,
         terrain,
         obj_size_mm=settings.obj_size_mm,
         path_thickness=settings.path_thickness,
         scale_hor=scale_hor,
+        scale_z=auto_scale,
         scale_elevation=settings.elevation_scale,
         overwrite_elevation=settings.overwrite_path_elevation,
-    )
-    if trail is not None and len(trail.vertices) > 0:
-        trail = _clip_to_shape(trail, tconf)
+    ) if len(trail_pts) >= 2 else None
 
     # 5. Export GLB
     export_preview_glb(terrain, trail, out_path)

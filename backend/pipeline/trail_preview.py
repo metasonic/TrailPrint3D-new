@@ -19,6 +19,7 @@ def build_trail_mesh(
     obj_size_mm: float,
     path_thickness: float,
     scale_hor: float,
+    scale_z: Optional[float] = None,
     scale_elevation: float = 1.0,
     overwrite_elevation: bool = True,
     progress_cb=None,
@@ -33,19 +34,25 @@ def build_trail_mesh(
     obj_size_mm    : used to recover scale_hor
     path_thickness : tube diameter in mm
     scale_hor      : horizontal scale factor (mm/mercator-unit)
+    scale_z        : vertical scale factor; defaults to scale_hor.
+                     Must be set to terrain's auto_scale when fixed_elevation_scale
+                     is True so trail Z is consistent with terrain Z.
     scale_elevation: elevation multiplier
     overwrite_elevation: cast path Z onto terrain surface
     """
     if len(track_points) < 2:
         return None
 
+    _scale_z = scale_z if scale_z is not None else scale_hor
+
     # Convert track points to world space.
-    # z uses the same scale_hor factor as x/y so all axes are mm-equivalent units.
+    # When overwrite_elevation=True the Z is replaced by ray casting anyway;
+    # when False, use the same auto_scale as terrain so units are consistent.
     world_pts = np.array([
         [
             mercator_x(lon) * scale_hor,
             mercator_y(lat) * scale_hor,
-            elev / 1000.0 * scale_hor * scale_elevation,
+            elev / 1000.0 * _scale_z * scale_elevation,
         ]
         for lat, lon, elev in track_points
     ], dtype=np.float64)

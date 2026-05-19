@@ -48,10 +48,12 @@ def build_terrain_mesh(
     config: TerrainConfig,
     elev_config: ElevationConfig,
     progress_cb=None,
-) -> trimesh.Trimesh:
+) -> tuple[trimesh.Trimesh, float]:
     """
     Generate a terrain mesh for the given bounding box and settings.
-    Returns a trimesh.Trimesh in Z-up world space (units: Blender internal units).
+    Returns (mesh, auto_scale) where auto_scale is the Z-scale factor (mm per
+    elevation-km) used when building vertices; callers must pass it to
+    build_trail_mesh so trail Z is consistent with terrain Z.
     """
     n = _grid_size(config.num_subdivisions)
     lats = np.linspace(config.min_lat, config.max_lat, n)
@@ -124,7 +126,7 @@ def build_terrain_mesh(
     # Add floor (min_thickness below lowest point)
     terrain = _add_floor(terrain, config.min_thickness)
 
-    return terrain
+    return terrain, auto_scale
 
 
 def _clip_to_shape(mesh: trimesh.Trimesh, config: TerrainConfig) -> trimesh.Trimesh:
@@ -186,6 +188,46 @@ def _clip_to_shape(mesh: trimesh.Trimesh, config: TerrainConfig) -> trimesh.Trim
     return clipped
 
 
+def points_inside_shape(world_pts_xy: np.ndarray, config: TerrainConfig) -> np.ndarray:
+    """Return boolean mask for arbitrary (N,2) world-space XY points.
+
+    Shares the same boundary logic as _clip_to_shape so trail-point filtering
+    and mesh clipping are always consistent.
+    """
+    cx = (mercator_x(config.min_lon) + mercator_x(config.max_lon)) / 2
+    cy = (mercator_y(config.min_lat) + mercator_y(config.max_lat)) / 2
+    xs_span = abs(mercator_x(config.max_lon) - mercator_x(config.min_lon))
+    ys_span = abs(mercator_y(config.max_lat) - mercator_y(config.min_lat))
+    span = max(xs_span, ys_span) or 1.0
+    scale_hor = config.obj_size_mm / span
+    cx_w, cy_w = cx * scale_hor, cy * scale_hor
+    half = config.obj_size_mm / 2.0
+    rot_rad = math.radians(config.shape_rotation)
+
+    vx = world_pts_xy[:, 0] - cx_w
+    vy = world_pts_xy[:, 1] - cy_w
+    if config.shape_rotation != 0:
+        c, s = math.cos(-rot_rad), math.sin(-rot_rad)
+        vx, vy = vx * c - vy * s, vx * s + vy * c
+
+    shape = config.shape.upper()
+    if shape == "SQUARE":
+        h_half = (config.rectangle_height / config.obj_size_mm) * half
+        return (np.abs(vx) <= half) & (np.abs(vy) <= h_half)
+    elif shape == "CIRCLE":
+        return vx ** 2 + vy ** 2 <= half ** 2
+    elif shape == "HEXAGON":
+        return _hex_inside(vx, vy, half)
+    elif shape == "OCTAGON":
+        return _octagon_inside(vx, vy, half)
+    elif shape == "ELLIPSE":
+        a, b = half, half * config.ellipse_ratio
+        return (vx / a) ** 2 + (vy / b) ** 2 <= 1.0
+    elif shape == "HEART":
+        return _heart_inside(vx, vy, half)
+    return np.ones(len(world_pts_xy), dtype=bool)
+
+
 def _hex_inside(vx: np.ndarray, vy: np.ndarray, r: float) -> np.ndarray:
     """Flat-top hexagon test."""
     q2x = np.abs(vx)
@@ -204,7 +246,7 @@ def _octagon_inside(vx: np.ndarray, vy: np.ndarray, r: float) -> np.ndarray:
 def _heart_inside(vx: np.ndarray, vy: np.ndarray, r: float) -> np.ndarray:
     # Unit heart (x²+y²-1)³−x²y³≤0 has max radial extent ≈1.4245 at θ≈±60°.
     # Scale so the heart fits within radius r.
-    _HEART_MAX_R = 1.4245
+    _HEART_MAX_R = 1.42455  # true max radial extent at θ ≈ 50.77°
     x = vx * (_HEART_MAX_R / r)
     y = vy * (_HEART_MAX_R / r)
     val = (x ** 2 + y ** 2 - 1) ** 3 - x ** 2 * y ** 3
