@@ -72,7 +72,6 @@ async def upload_gpx(request: Request, file: UploadFile = File(...)):
                     raise HTTPException(status_code=413, detail="File too large")
                 buffer.write(chunk)
     except BaseException as e:
-        # Catch BaseException to also catch asyncio.CancelledError when clients disconnect
         if os.path.exists(file_path):
             os.remove(file_path)
         raise e
@@ -89,7 +88,7 @@ async def generate_preview(file_id: str, req: PreviewRequest):
     job_id = str(uuid.uuid4())
     output_path = os.path.join(OUTPUT_DIR, f"{job_id}_preview.glb")
 
-    settings = req.dict()
+    settings = req.model_dump()
     job = await asyncio.to_thread(q.enqueue, process_preview, job_id, gpx_path, output_path, settings, job_id=job_id)
     return {"job_id": job.get_id()}
 
@@ -110,7 +109,7 @@ async def request_export(req: ExportRequest):
     job_id = str(uuid.uuid4())
     output_path = os.path.join(OUTPUT_DIR, f"{job_id}_export.{req.format}")
 
-    settings = req.dict()
+    settings = req.model_dump()
     job = await asyncio.to_thread(q.enqueue, process_export, job_id, gpx_path, output_path, req.format, settings, job_id=job_id)
     return {"job_id": job.get_id()}
 
