@@ -63,7 +63,12 @@ def build_trail_mesh(
 
 
 def _cast_on_terrain(pts: np.ndarray, terrain: trimesh.Trimesh) -> np.ndarray:
-    """Raycast each point downward onto the terrain, replace Z with hit Z."""
+    """Raycast each point downward onto the terrain, replace Z with hit Z.
+
+    Requests all hits per ray and keeps the highest-Z intersection so that
+    side-wall and floor faces added by _add_floor are ignored — the top
+    terrain surface always produces the highest Z value.
+    """
     result = pts.copy()
     ray_origins = pts.copy()
     ray_origins[:, 2] = terrain.vertices[:, 2].max() + 10
@@ -73,10 +78,15 @@ def _cast_on_terrain(pts: np.ndarray, terrain: trimesh.Trimesh) -> np.ndarray:
         locations, index_ray, _ = terrain.ray.intersects_location(
             ray_origins=ray_origins,
             ray_directions=ray_dirs,
-            multiple_hits=False,
+            multiple_hits=True,
         )
-        for i, loc in zip(index_ray, locations):
-            result[i, 2] = loc[2]
+        # For each ray pick the highest-Z hit (= top terrain surface).
+        best: dict[int, float] = {}
+        for ray_idx, loc in zip(index_ray, locations):
+            if ray_idx not in best or loc[2] > best[ray_idx]:
+                best[ray_idx] = float(loc[2])
+        for ray_idx, z in best.items():
+            result[ray_idx, 2] = z
     except Exception:
         pass  # fall back to original Z
 

@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from ..config import get_settings
-from ..models.schemas import PreviewRequest, PreviewResponse
+from ..models.schemas import PreviewRequest, PreviewResponse, TerrainPreviewStats
 from ..pipeline.elevation import ElevationConfig
 
 router = APIRouter(prefix="/api", tags=["preview"])
@@ -17,8 +17,16 @@ logger = logging.getLogger(__name__)
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
-# Cap concurrent preview generations to avoid exhausting the thread pool
-_preview_semaphore = asyncio.Semaphore(4)
+# Lazily initialised inside the first request so it is created in the running
+# event loop, not at module import time (which has no loop in Python 3.12+).
+_preview_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    global _preview_semaphore
+    if _preview_semaphore is None:
+        _preview_semaphore = asyncio.Semaphore(4)
+    return _preview_semaphore
 
 PREVIEW_TIMEOUT_S = 120.0
 
@@ -59,7 +67,7 @@ async def generate_preview(body: PreviewRequest):
     try:
         from ..pipeline.preview_export import generate_preview as _gen
 
-        async with _preview_semaphore:
+        async with _get_semaphore():
             terrain_stats = await asyncio.wait_for(
                 asyncio.to_thread(_gen, gpx_path, settings, out_path, elev_cfg),
                 timeout=PREVIEW_TIMEOUT_S,
@@ -71,7 +79,10 @@ async def generate_preview(body: PreviewRequest):
         raise HTTPException(status_code=500, detail="Preview generation failed")
 
     glb_url = f"/api/preview/{body.file_id}.glb"
-    return PreviewResponse(glb_url=glb_url, terrain_stats=terrain_stats)
+    return PreviewResponse(
+        glb_url=glb_url,
+        terrain_stats=TerrainPreviewStats(**terrain_stats),
+    )
 
 
 @router.get("/preview/{filename}")

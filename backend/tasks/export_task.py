@@ -192,7 +192,11 @@ def export_model(
         try:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            pass
+            # EOF on stdout was reached (drain thread finished), but the process
+            # hasn't exited yet. Kill to ensure returncode is set — a None returncode
+            # would cause `None != 0` to evaluate True and incorrectly fail the job.
+            proc.kill()
+            proc.wait()
 
         # Write log and parse progress/status messages for Redis
         log_file = job_dir / "blender.log"

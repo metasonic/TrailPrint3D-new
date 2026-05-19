@@ -86,9 +86,16 @@ class PreviewRequest(BaseModel):
     settings: GenerationSettings = Field(default_factory=GenerationSettings)
 
 
+class TerrainPreviewStats(BaseModel):
+    vertex_count: int
+    face_count: int
+    bbox: tuple[float, float, float, float]
+    track_length_km: float
+
+
 class PreviewResponse(BaseModel):
     glb_url: str
-    terrain_stats: dict
+    terrain_stats: TerrainPreviewStats
 
 
 class ExportRequest(BaseModel):

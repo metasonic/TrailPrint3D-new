@@ -77,9 +77,16 @@ export interface GenerationSettings {
   trail_name?: string;
 }
 
+export interface TerrainPreviewStats {
+  vertex_count: number;
+  face_count: number;
+  bbox: [number, number, number, number];
+  track_length_km: number;
+}
+
 export interface PreviewResponse {
   glb_url: string;
-  terrain_stats: Record<string, unknown>;
+  terrain_stats: TerrainPreviewStats;
 }
 
 export interface ExportResponse {
