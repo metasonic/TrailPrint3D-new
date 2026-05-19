@@ -138,14 +138,16 @@ export async function generatePreview(
 }
 
 export function resolvePreviewUrl(glbUrl: string): string {
-  if (glbUrl.startsWith("http")) return glbUrl;
+  if (glbUrl.startsWith("http://") || glbUrl.startsWith("https://") || glbUrl.startsWith("//")) return glbUrl;
   return `${API_BASE}${glbUrl}`;
 }
+
+export type ExportFormat = "STL" | "OBJ" | "3MF";
 
 export async function startExport(
   fileId: string,
   settings: GenerationSettings,
-  format: "STL" | "OBJ" | "3MF",
+  format: ExportFormat,
   signal?: AbortSignal
 ): Promise<ExportResponse> {
   const res = await fetchWithTimeout(`${API_BASE}/api/export`, {
@@ -181,5 +183,5 @@ export async function getJobStatus(jobId: string, signal?: AbortSignal): Promise
 }
 
 export function downloadUrl(jobId: string, filename: string): string {
-  return `${API_BASE}/api/download/${jobId}/${filename}`;
+  return `${API_BASE}/api/download/${jobId}/${encodeURIComponent(filename)}`;
 }

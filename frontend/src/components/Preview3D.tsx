@@ -20,7 +20,7 @@ function disposeMesh(mesh: THREE.Mesh) {
 
 export default function Preview3D({ glbUrl, loading = false, loadingMessage = "Generating preview…", errorMessage, onError }: Props) {
   const ariaLabel = glbUrl
-    ? "Interactive 3D terrain preview. Use mouse drag or arrow keys to orbit, scroll to zoom, right-click to pan."
+    ? "Interactive 3D terrain preview. Use mouse drag to orbit, scroll to zoom, right-click to pan, arrow keys to pan."
     : loading
     ? "3D terrain preview — loading"
     : "3D terrain preview — no model loaded";
@@ -83,6 +83,7 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
     controls.minDistance = 5;
     controls.maxDistance = 2000;
     controls.maxPolarAngle = Math.PI * 0.75;
+    controls.listenToKeyEvents(renderer.domElement);
     controlsRef.current = controls;
 
     let animId: number;
@@ -133,6 +134,11 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
       scene.remove(ambient, sun, fill);
       renderer.dispose();
       el.removeChild(renderer.domElement);
+      // Null refs so any stale async callbacks don't operate on disposed objects
+      rendererRef.current = null;
+      sceneRef.current = null;
+      cameraRef.current = null;
+      controlsRef.current = null;
     };
   }, []);
 
@@ -166,6 +172,8 @@ export default function Preview3D({ glbUrl, loading = false, loadingMessage = "G
               (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => {
                 if (!seenMats.has(m)) { seenMats.add(m); m.dispose(); }
               });
+            } else if ((child as THREE.Light).isLight) {
+              (child as THREE.Light).shadow?.map?.dispose();
             }
           });
           return;

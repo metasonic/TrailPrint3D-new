@@ -54,14 +54,14 @@ class _SecurityHeaders(BaseHTTPMiddleware):
         resp.headers["X-XSS-Protection"] = "0"
         resp.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline'; "
+            "script-src 'self'; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' blob: data:; "
             "connect-src 'self'; "
             "worker-src blob:; "
             "object-src 'none';"
         )
-        resp.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=(), payment=()"
+        resp.headers["Permissions-Policy"] = "geolocation=(self), camera=(), microphone=(), payment=()"
         if cfg.ENVIRONMENT != "development":
             resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return resp

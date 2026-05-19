@@ -12,6 +12,7 @@ import {
   PollError,
   downloadUrl,
   resolvePreviewUrl,
+  type ExportFormat,
   type GenerationSettings,
   type TrackStats,
   type JobStatus,
@@ -67,7 +68,7 @@ export default function TrailPrintApp() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [jobStatus, setJobStatus] = useState<JobStatus | null>(null);
-  const [exportFormat, setExportFormat] = useState<"STL" | "OBJ" | "3MF">("STL");
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("STL");
 
   const debouncedSettings = useDebounce(settings, 500);
 
@@ -162,6 +163,9 @@ export default function TrailPrintApp() {
           } else if (e.status === 503) {
             setJobStatus((s) => s && s.status !== "done" && s.status !== "failed"
               ? { ...s, message: "Server busy, retrying…" } : s);
+          } else {
+            setJobStatus((s) => s && s.status !== "done" && s.status !== "failed"
+              ? { ...s, message: `Server error ${e.status}, retrying…` } : s);
           }
         } else {
           // Network failure (offline, DNS, etc.) — show message after 3 consecutive failures
@@ -208,7 +212,7 @@ export default function TrailPrintApp() {
     value: GenerationSettings[K]
   ) => setSettings((s) => ({ ...s, [key]: value }));
 
-  const handleExport = useCallback(async (fmt: "STL" | "OBJ" | "3MF") => {
+  const handleExport = useCallback(async (fmt: ExportFormat) => {
     if (!fileId) return;
     clearPoll();
     const gen = ++exportGenRef.current;
@@ -237,7 +241,7 @@ export default function TrailPrintApp() {
     const saved = sessionStorage.getItem(SESSION_KEY);
     if (!saved) return;
     try {
-      const { job_id, format } = JSON.parse(saved) as { job_id: string; format: "STL" | "OBJ" | "3MF" };
+      const { job_id, format } = JSON.parse(saved) as { job_id: string; format: ExportFormat };
       setExportFormat(format);
       setJobStatus({ job_id, status: "pending", progress: 0, message: "Resuming export…", files: [] });
       const gen = ++exportGenRef.current;
@@ -269,7 +273,7 @@ export default function TrailPrintApp() {
   const isExporting = jobStatus?.status === "running" || jobStatus?.status === "pending";
 
   // Roving tabIndex + arrow-key navigation for the export format radio group
-  const handleFormatKeyDown = (e: React.KeyboardEvent, fmt: typeof EXPORT_FORMATS[number]) => {
+  const handleFormatKeyDown = (e: React.KeyboardEvent, fmt: ExportFormat) => {
     const idx = EXPORT_FORMATS.indexOf(fmt);
     let next: typeof EXPORT_FORMATS[number] | undefined;
     if (e.key === "ArrowRight" || e.key === "ArrowDown") {
@@ -317,6 +321,7 @@ export default function TrailPrintApp() {
             className="sr-only"
             onChange={(e) => {
               const f = e.target.files?.[0];
+              if (fileInputRef.current) fileInputRef.current.value = "";
               if (!f) return;
               const ext = f.name.split(".").pop()?.toLowerCase();
               if (ext !== "gpx" && ext !== "igc") {
@@ -366,7 +371,7 @@ export default function TrailPrintApp() {
                   type="text"
                   maxLength={100}
                   placeholder="e.g. Mont Blanc Tour"
-                  autoComplete="on"
+                  autoComplete="off"
                   value={settings.trail_name ?? ""}
                   onChange={(e) => {
                     const v = e.target.value;
@@ -405,7 +410,7 @@ export default function TrailPrintApp() {
               {settings.shape === "ELLIPSE" && (
                 <label htmlFor="ellipse-ratio">Ellipse Ratio (0.1–3)
                   <input id="ellipse-ratio" type="number" min={0.1} max={3} step={0.05} value={settings.ellipse_ratio ?? 0.75}
-                    onChange={(e) => updateSetting("ellipse_ratio", +e.target.value)} />
+                    onChange={(e) => updateSetting("ellipse_ratio", Math.max(0.1, Math.min(3, +e.target.value || 0.75)))} />
                 </label>
               )}
               <label htmlFor="rotation-range">Rotation (°)
@@ -425,7 +430,7 @@ export default function TrailPrintApp() {
               <summary>Terrain</summary>
               <label htmlFor="elev-scale">Elevation Scale
                 <input id="elev-scale" type="number" min={0.01} max={100} step={0.1} value={settings.elevation_scale}
-                  onChange={(e) => updateSetting("elevation_scale", Math.max(0.01, +e.target.value))} />
+                  onChange={(e) => updateSetting("elevation_scale", Math.max(0.01, Math.min(100, +e.target.value || 1.0)))} />
               </label>
               <label htmlFor="resolution-range">Resolution (1–8)
                 <input
@@ -443,7 +448,7 @@ export default function TrailPrintApp() {
               </p>
               <label htmlFor="min-thick">Min Thickness (mm)
                 <input id="min-thick" type="number" min={0.5} max={50} step={0.5} value={settings.min_thickness}
-                  onChange={(e) => updateSetting("min_thickness", +e.target.value)} />
+                  onChange={(e) => updateSetting("min_thickness", Math.max(0.5, Math.min(50, +e.target.value || 2.0)))} />
               </label>
             </details>
 
@@ -451,7 +456,7 @@ export default function TrailPrintApp() {
               <summary>Trail</summary>
               <label htmlFor="path-thick">Path Thickness (mm)
                 <input id="path-thick" type="number" min={0.1} max={5} step={0.1} value={settings.path_thickness}
-                  onChange={(e) => updateSetting("path_thickness", +e.target.value)} />
+                  onChange={(e) => updateSetting("path_thickness", Math.max(0.1, Math.min(5, +e.target.value || 1.2)))} />
               </label>
             </details>
 
@@ -537,7 +542,7 @@ export default function TrailPrintApp() {
         <Preview3D
           glbUrl={glbUrl}
           loading={previewLoading || uploadLoading}
-          loadingMessage={uploadLoading ? "Uploading file…" : "Generating preview…"}
+          loadingMessage={previewLoading ? "Generating preview…" : "Uploading file…"}
           errorMessage={previewError}
           onError={(msg) => setPreviewError(msg)}
         />
@@ -562,10 +567,13 @@ export default function TrailPrintApp() {
                     type="button"
                     role="radio"
                     aria-checked={exportFormat === fmt}
-                    className={`btn-export${exportFormat === fmt ? " active" : ""}`}
+                    className="btn-export"
                     tabIndex={exportFormat === fmt ? 0 : -1}
                     onClick={() => setExportFormat(fmt)}
-                    onKeyDown={(e) => handleFormatKeyDown(e, fmt)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { e.preventDefault(); return; }
+                      handleFormatKeyDown(e, fmt);
+                    }}
                   >
                     {fmt}
                   </button>
@@ -614,7 +622,12 @@ export default function TrailPrintApp() {
                   : `${jobStatus.message || jobStatus.status} — ${jobStatus.progress}%`}
               </span>
               {jobStatus.status === "failed" && (
-                <button type="button" className="btn-export" onClick={() => handleExport(exportFormat)}>
+                <button
+                  type="button"
+                  className="btn-export"
+                  aria-label={`Retry ${exportFormat} export`}
+                  onClick={() => handleExport(exportFormat)}
+                >
                   <span aria-hidden="true">↺ </span>Retry
                 </button>
               )}

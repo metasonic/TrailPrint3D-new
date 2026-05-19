@@ -22,7 +22,7 @@ def _sanitize_filename(name: str | None) -> str:
     if not name:
         return "upload"
     safe = _SAFE_NAME_RE.sub("_", Path(name).name)
-    return safe[:255] or "upload"
+    return safe[:255].strip() or "upload"
 
 
 @router.post("/upload", response_model=UploadResponse)
@@ -63,7 +63,7 @@ async def upload_gpx(file: UploadFile = File(...)):
 
     file_id = str(uuid.uuid4())
     dest = cfg.OUTPUT_DIR / "uploads" / f"{file_id}{ext}"
-    dest.write_bytes(content)
+    await asyncio.to_thread(dest.write_bytes, content)
 
     try:
         def _parse(p):

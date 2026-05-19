@@ -13,11 +13,11 @@ class GenerationSettings(BaseModel):
     ellipse_ratio: float = Field(0.75, gt=0.0, le=10.0)
 
     # Terrain
-    elevation_scale: float = Field(1.0, ge=0)
+    elevation_scale: float = Field(1.0, gt=0.0)
     num_subdivisions: int = Field(4, ge=1, le=8)
     min_thickness: float = Field(2.0, ge=0.5)
     fixed_elevation_scale: bool = False
-    plate_thickness: float = Field(5.0, ge=0)
+    plate_thickness: float = Field(5.0, ge=0.5)
 
     # Trail
     path_thickness: float = Field(1.2, ge=0.1, le=5)
@@ -64,12 +64,6 @@ class GenerationSettings(BaseModel):
     y_terrain_offset: float = 0.0
 
 
-class UploadResponse(BaseModel):
-    file_id: str
-    filename: str = Field(max_length=255)
-    track_stats: "TrackStats"
-
-
 class TrackStats(BaseModel):
     point_count: int
     length_km: float
@@ -79,6 +73,12 @@ class TrackStats(BaseModel):
     min_lon: float
     max_lon: float
     date: Optional[str] = None
+
+
+class UploadResponse(BaseModel):
+    file_id: str
+    filename: str = Field(max_length=255)
+    track_stats: TrackStats
 
 
 class PreviewRequest(BaseModel):
@@ -113,5 +113,5 @@ class JobStatus(BaseModel):
     status: Literal["pending", "running", "done", "failed"]
     progress: int = 0
     message: str = ""
-    error: str | None = None
+    error: Optional[str] = None
     files: list[str] = Field(default_factory=list)

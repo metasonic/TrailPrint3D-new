@@ -160,7 +160,15 @@ def fetch_osm_data(
     config: OsmConfig,
 ) -> Optional[dict]:
     """Fetch OSM data for a bounding box, using the disk cache when fresh."""
-    cache_key = _make_cache_key(bbox, kind, config)
+    # Clamp bbox before computing cache key so out-of-range inputs hit the same cache entry
+    s, w, n, e = bbox
+    s = max(-90.0, min(90.0, s))
+    n = max(-90.0, min(90.0, n))
+    w = max(-180.0, min(180.0, w))
+    e = max(-180.0, min(180.0, e))
+    clamped = (s, w, n, e)
+
+    cache_key = _make_cache_key(clamped, kind, config)
     cache_path = config.osm_cache_dir / f"{cache_key}.json"
 
     if cache_path.exists() and not config.disable_cache:
@@ -171,13 +179,7 @@ def fetch_osm_data(
             except (json.JSONDecodeError, OSError):
                 pass  # Corrupt/partial cache file — fall through to re-fetch
 
-    s, w, n, e = bbox
-    s = max(-90.0, min(90.0, s))
-    n = max(-90.0, min(90.0, n))
-    w = max(-180.0, min(180.0, w))
-    e = max(-180.0, min(180.0, e))
-
-    query = _build_query((s, w, n, e), kind, config)
+    query = _build_query(clamped, kind, config)
 
     for attempt in range(config.api_retries):
         try:
@@ -193,7 +195,15 @@ def fetch_osm_data(
             tmp.write_text(json.dumps(data))
             tmp.replace(cache_path)
             return data
-        except Exception as exc:
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            if 400 <= status < 500 and status not in (408, 429):
+                logger.error("OSM fetch returned non-retryable HTTP %d; aborting", status)
+                return None
+            wait = 2 ** attempt
+            logger.warning("OSM fetch attempt %d failed (HTTP %d); retrying in %ds", attempt + 1, status, wait)
+            time.sleep(wait)
+        except Exception:
             wait = 2 ** attempt
             logger.warning("OSM fetch attempt %d failed; retrying in %ds", attempt + 1, wait)
             time.sleep(wait)

@@ -128,16 +128,3 @@ def bbox_for_track(
     )
 
 
-def separate_duplicate_xy(
-    coordinates: list[list[float]], offset: float = 0.05
-) -> list[list[float]]:
-    """Slightly offset duplicate XYZ points to avoid degenerate geometry."""
-    seen: set[tuple] = set()
-    for point in coordinates:
-        key = (point[0], point[1], point[2])
-        if key in seen:
-            point[2] += offset
-            point[1] += offset
-        else:
-            seen.add(key)
-    return coordinates

@@ -4,11 +4,15 @@ All bpy dependencies removed; returns plain Python data structures.
 """
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import date as _date, datetime, timedelta
+from datetime import date as _date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+
+try:
+    import defusedxml.ElementTree as ET
+except ImportError:
+    import xml.etree.ElementTree as ET  # type: ignore[no-redef]
 
 
 TrackPoint = tuple[float, float, float, Optional[datetime]]  # lat, lon, elev, time
@@ -104,7 +108,7 @@ def read_igc(filepath: str | Path) -> list[Segment]:
     coordinates: Segment = []
     flight_date: Optional[_date] = None
 
-    with open(str(filepath), "r") as f:
+    with open(str(filepath), "r", encoding="latin-1") as f:
         lines = f.readlines()
 
     # Parse HFDTE header to get the actual flight date.
@@ -123,7 +127,7 @@ def read_igc(filepath: str | Path) -> list[Segment]:
                 pass
             break
 
-    today = datetime.now().date()
+    today = datetime.now(timezone.utc).date()
     base_date = flight_date or today
 
     prev_secs: Optional[int] = None
@@ -160,9 +164,14 @@ def read_igc(filepath: str | Path) -> list[Segment]:
             if lon_str[8] == "W":
                 lon = -lon
 
+            # Validity flag: 'A' = 3-D fix, 'V' = 2-D / invalid.
+            # Skip records with unrecognised flag characters (malformed B records).
+            if line[24:25] not in ("A", "V"):
+                continue
+
             gps_alt = int(line[30:35])
             timestamp = datetime(base_date.year, base_date.month, base_date.day,
-                                 hours, minutes, seconds)
+                                 hours, minutes, seconds, tzinfo=timezone.utc)
             coordinates.append((lat, lon, float(gps_alt), timestamp))
         except (ValueError, IndexError):
             continue

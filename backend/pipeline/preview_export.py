@@ -22,12 +22,6 @@ if TYPE_CHECKING:
 _R_YUP = tf.rotation_matrix(-np.pi / 2, [1, 0, 0])
 
 
-def _apply_yup(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
-    """Return a new mesh with vertices rotated to Y-up coordinates."""
-    verts = trimesh.transform_points(mesh.vertices, _R_YUP)
-    return trimesh.Trimesh(vertices=verts, faces=mesh.faces, process=False)
-
-
 def export_preview_glb(
     terrain: trimesh.Trimesh,
     trail: Optional[trimesh.Trimesh],

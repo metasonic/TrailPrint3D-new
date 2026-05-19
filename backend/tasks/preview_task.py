@@ -38,7 +38,10 @@ def generate_preview(self, file_id: str, settings_dict: dict, out_dir: str) -> d
     if gpx_path is None:
         return {"status": "failed", "error": f"File {file_id!r} not found"}
 
-    out_path = Path(out_dir) / f"{file_id}.glb"
+    preview_dir = (cfg.OUTPUT_DIR / "preview").resolve()
+    out_path = (Path(out_dir) / f"{file_id}.glb").resolve()
+    if not out_path.is_relative_to(preview_dir):
+        return {"status": "failed", "error": "Invalid out_dir — path traversal rejected"}
 
     elev_cfg = ElevationConfig(
         api=settings.api,

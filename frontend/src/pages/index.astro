@@ -71,7 +71,8 @@ import TrailPrintApp from "../components/TrailPrintApp";
       display: grid;
       grid-template-columns: 300px 1fr;
       grid-template-rows: 1fr auto;
-      height: 100dvh; /* 100dvh: excludes mobile browser chrome (iOS safe area fix) */
+      height: 100vh; /* fallback for browsers without dvh support (Safari < 15.4, Chrome < 108) */
+      height: 100dvh; /* excludes mobile browser chrome (iOS safe area fix) */
       gap: 0;
     }
     .sidebar {

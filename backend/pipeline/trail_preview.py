@@ -4,8 +4,11 @@ Generates a tube mesh along the GPX track, cast onto the terrain surface.
 """
 from __future__ import annotations
 
+import logging
 import math
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 import numpy as np
 import trimesh
@@ -78,7 +81,9 @@ def _cast_on_terrain(pts: np.ndarray, terrain: trimesh.Trimesh) -> np.ndarray:
     """
     result = pts.copy()
     ray_origins = pts.copy()
-    ray_origins[:, 2] = terrain.vertices[:, 2].max() + 10
+    z_min = terrain.vertices[:, 2].min()
+    z_max = terrain.vertices[:, 2].max()
+    ray_origins[:, 2] = z_max + max(10.0, (z_max - z_min) * 0.05)
     ray_dirs = np.tile([0, 0, -1], (len(pts), 1)).astype(np.float64)
 
     try:
@@ -95,7 +100,7 @@ def _cast_on_terrain(pts: np.ndarray, terrain: trimesh.Trimesh) -> np.ndarray:
         for ray_idx, z in best.items():
             result[ray_idx, 2] = z
     except Exception:
-        pass  # fall back to original Z
+        logger.debug("Ray cast onto terrain failed; using original GPX elevation", exc_info=True)
 
     return result
 

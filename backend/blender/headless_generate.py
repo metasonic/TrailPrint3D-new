@@ -98,11 +98,11 @@ def main():
     tp3d.setdefault("el_bHeightMultiplier", 1.0)
     tp3d.setdefault("el_sMultiplier", 1.0)
     tp3d.setdefault("el_oFlip", False)
-    tp3d.setdefault("mountain_treshold", 60)
+    tp3d.setdefault("mountain_treshold", 60)  # typo matches addon property name as of v4.5
     tp3d.setdefault("cl_thickness", 0.2)
     tp3d.setdefault("cl_distance", 2.0)
     tp3d.setdefault("cl_offset", 0.0)
-    tp3d.setdefault("indipendendTiles", False)
+    tp3d.setdefault("indipendendTiles", False)  # typo matches addon property name as of v4.5
     tp3d.setdefault("tolerance", 0.2)
     tp3d.setdefault("toleranceElements", 0.4)
     tp3d.setdefault("elementModeInset", 2.0)
@@ -132,7 +132,7 @@ def main():
     tp3d.setdefault("svg_path", "")
 
     tp3d["file_path"] = gpx_path
-    tp3d["export_path"] = export_dir + "/"
+    tp3d["export_path"] = str(Path(export_dir)) + "/"
 
     # -----------------------------------------------------------------------
     # Inject tp3d into bpy.context.scene.
@@ -164,7 +164,7 @@ def main():
     # -----------------------------------------------------------------------
     class _MockPrefs:
         openTopographyApiKey = ot_api_key
-        default_export_folder = export_dir + "/"
+        default_export_folder = str(Path(export_dir)) + "/"
 
     try:
         import TrailPrint3D.addon_preferences as _ap

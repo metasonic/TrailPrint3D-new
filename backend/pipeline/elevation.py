@@ -9,7 +9,6 @@ import io
 import json
 import logging
 import math
-import os
 import struct
 import threading
 import time
@@ -82,7 +81,9 @@ def _save_cache(config: ElevationConfig) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     with _cache_lock:
         max_size = config.elevation_cache_size
-        if len(_cache) > max_size:
+        if max_size <= 0:
+            _cache.clear()
+        elif len(_cache) > max_size:
             keys = list(_cache.keys())
             for k in keys[:-max_size]:
                 del _cache[k]
@@ -309,8 +310,7 @@ def get_elevation_opentopodata(
     config: ElevationConfig,
     progress_cb=None,
 ) -> list[float]:
-    if not _cache_loaded:
-        _load_cache(config)
+    _load_cache(config)
 
     to_fetch = []
     indices = []
@@ -335,7 +335,10 @@ def get_elevation_opentopodata(
         resp = requests.get(f"{url_base}?locations={query}", timeout=30)
         resp.raise_for_status()
         data = resp.json()
-        for o, result in enumerate(data["results"]):
+        results = data.get("results", [])
+        if not results:
+            logger.warning("OpenTopoData returned no results for batch at index %d", i)
+        for o, result in enumerate(results):
             if o >= len(batch):
                 break  # guard against API returning more results than requested
             elev = result.get("elevation") or 0.0

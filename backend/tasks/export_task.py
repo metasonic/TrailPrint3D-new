@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _SAFE_FILENAME_RE = re.compile(r"^[0-9a-zA-Z_\-]+\.(stl|obj|3mf|glb)$", re.IGNORECASE)
-BLENDER_TIMEOUT = 600  # hard cap on headless generation (seconds)
+BLENDER_TIMEOUT = 580  # hard cap: leaves ≥30 s headroom before Celery's soft limit at 620 s
 
 
 _MAX_OUTPUT_LINES = 10_000  # cap Blender stdout to avoid OOM in worker
@@ -165,6 +165,7 @@ def export_model(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            errors="replace",
             env=proc_env,
         )
 
@@ -201,12 +202,15 @@ def export_model(
             # EOF on stdout was reached (drain thread finished), but the process
             # hasn't exited yet. Kill to ensure returncode is set — a None returncode
             # would cause `None != 0` to evaluate True and incorrectly fail the job.
-            proc.kill()
+            try:
+                proc.kill()
+            except OSError:
+                pass
             proc.wait()
 
         # Write log and parse progress/status messages for Redis
         log_file = job_dir / "blender.log"
-        with open(log_file, "w") as lf:
+        with open(log_file, "w", encoding="utf-8") as lf:
             for line in output_lines:
                 lf.write(line)
                 stripped = line.strip()
@@ -265,4 +269,8 @@ def export_model(
         try:
             config_file.unlink(missing_ok=True)
         except OSError:
+            pass
+        try:
+            r.close()
+        except Exception:
             pass

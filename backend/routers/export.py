@@ -118,10 +118,15 @@ async def get_job_status(job_id: str):
     raw_status = _s(data.get(b"status", data.get("status", "pending")))
     status = raw_status if raw_status in _VALID_STATUSES else "failed"
 
+    try:
+        progress = int(_s(data.get(b"progress", data.get("progress", 0))))
+    except (ValueError, TypeError):
+        progress = 0
+
     return JobStatus(
         job_id=job_id,
         status=status,
-        progress=int(_s(data.get(b"progress", data.get("progress", 0)))),
+        progress=progress,
         message=_s(data.get(b"message", data.get("message", ""))),
         error=_s(data.get(b"error", data.get("error", ""))) or None,
         files=files,
@@ -142,6 +147,23 @@ async def download_file(job_id: str, filename: str):
     # Path-traversal jail: resolved path must stay inside exports dir
     if not path.is_relative_to(exports_dir):
         raise HTTPException(status_code=400, detail="Invalid path")
+
+    # Verify the job is complete before serving the file.
+    # Silently skip the check if Redis is unavailable — path existence is the final guard.
+    try:
+        r = _get_redis()
+        job_data = await r.hgetall(f"job:{job_id}")
+        if job_data:
+            def _s2(v) -> str:
+                return v.decode() if isinstance(v, bytes) else str(v)
+            raw_status = _s2(job_data.get(b"status", job_data.get("status", "")))
+            if raw_status and raw_status != "done":
+                raise HTTPException(status_code=404, detail="File not found")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
     if not path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
