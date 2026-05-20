@@ -1,0 +1,14 @@
+# Build output
+dist/
+.astro/
+
+# Dependencies
+node_modules/
+
+# Local env
+.env
+.env.*
+!.env.example
+
+# Vite cache
+*.local
