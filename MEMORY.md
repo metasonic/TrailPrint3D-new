@@ -1,0 +1,196 @@
+# MEMORY.md — TrailPrint3D Web Conversion
+
+## Project Overview
+Converting the TrailPrint3D Blender addon into a self-hosted web application.
+- Frontend: Astro 6, TypeScript, Tailwind CSS, Three.js
+- Backend: FastAPI, Python 3.11+, Celery + Redis
+- Export Engine: Headless Blender via subprocess
+- Deployment: Docker Compose
+
+---
+
+## Session Log
+
+### Session 1 — 2026-05-20
+
+**Repository confirmed present**: `/home/user/TrailPrint3D-new`
+- Addon source: `TrailPrint3D/`
+- Test GPX fixture available: `Cluj_Eco_Trail.gpx`
+- MEMORY.md and ERRORS.md created this session.
+
+**Mandatory Q&A — answered 2026-05-20**
+
+| # | Question | Answer |
+|---|----------|--------|
+| Q1 | Preview engine | Headless Blender (same pipeline for preview + export, 5–15s latency accepted) |
+| Q2 | Test fixture | Use `Cluj_Eco_Trail.gpx` already in repo |
+| Q3 | UI design approach | Tailwind design tokens defined in code (no Figma dependency) |
+| Q4 | Job state persistence | Ephemeral Redis-backed Celery results; loss on Redis restart accepted |
+
+---
+
+### Decision — Preview Engine (2026-05-20)
+- **Decided**: Use headless Blender for both preview and export jobs.
+- **Why**: Guarantees visual parity between preview and final export. Simplest single pipeline.
+- **Rejected**: Custom Python preview engine.
+- **Rejected Why**: Faster but risks visual mismatch with Blender-exported model; adds maintenance burden of a second renderer.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+### Decision — Test GPX Fixture (2026-05-20)
+- **Decided**: `Cluj_Eco_Trail.gpx` (present in repo root) is the standard integration test fixture.
+- **Why**: Already available, no additional setup.
+- **Rejected**: User-supplied fixture.
+- **Rejected Why**: Not needed; existing file is sufficient.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+### Decision — UI Design Approach (2026-05-20)
+- **Decided**: Define Tailwind design tokens (colors, spacing, type scale) directly in `tailwind.config` and build UI iteratively.
+- **Why**: No external tooling dependency, unblocks Phase 5 immediately.
+- **Rejected**: Wait for Figma specifications.
+- **Rejected Why**: Blocks Phase 5 with no concrete ETA for designer deliverables.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+### Decision — Job State Persistence (2026-05-20)
+- **Decided**: Ephemeral Redis-backed Celery results only; no database for job history.
+- **Why**: Simpler stack, fewer services, matches project constraint of ephemeral-by-design storage.
+- **Rejected**: SQLite or PostgreSQL for persistent job history.
+- **Rejected Why**: Not requested; adds complexity without confirmed requirement.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+---
+
+---
+
+## Phase 1 Analysis — Repository Map (2026-05-20)
+
+### File inventory
+
+| File | Role | Headless viable? | Notes |
+|------|------|-----------------|-------|
+| `TrailPrint3D/__init__.py` | Addon registration, startup hooks | Not needed | Use individual modules directly |
+| `TrailPrint3D/props.py` | All 60+ user-adjustable scene properties | Replaceable | Values injected from JSON settings dict |
+| `TrailPrint3D/operators.py` | Blender operator wrappers | Not needed | Operators call `utils.*` functions; call those directly |
+| `TrailPrint3D/panels.py` | GUI panel layouts | Not needed | Web UI replaces this |
+| `TrailPrint3D/export.py` | STL/OBJ/3MF export, 3MF thumbnail | Partial | Export fns headless ✓; `customThumbnail()` **GUI-only** — skip |
+| `TrailPrint3D/utils/io_gpx.py` | GPX/IGC parsing | ✓ Yes | Uses stdlib xml.etree only; one `bpy.context` write to remove |
+| `TrailPrint3D/utils/elevation.py` | AWS Terrarium tiles, OpenTopoData, OpenTopography | ✓ Yes | All HTTP via `requests`; reads `bpy.context.scene.tp3d.*` for settings |
+| `TrailPrint3D/utils/geo.py` | Mercator projection, haversine, scale | ✓ Yes | Pure math; reads scale vars from scene props |
+| `TrailPrint3D/utils/generation.py` | `runGeneration()` master orchestrator | ✓ With guards | See blocker list below |
+| `TrailPrint3D/utils/terrain.py` | `coloring_main()`, ocean, contour lines | ✓ With guards | Boolean ops work headlessly |
+| `TrailPrint3D/utils/osm.py` | Overpass API, buildings, roads | ✓ Yes | Pure HTTP + bmesh |
+| `TrailPrint3D/utils/mesh_ops.py` | bmesh booleans, raycasting, normal ops | ✓ Yes | No GUI dependency |
+| `TrailPrint3D/utils/primitives.py` | Hexagon/circle/rectangle mesh creation | ✓ Yes | Pure bmesh |
+| `TrailPrint3D/utils/scene.py` | Camera zoom, object cleanup, message boxes | Partial | `zoom_camera_to_selected()` / `show_message_box()` **GUI-only** — guard |
+| `TrailPrint3D/utils/geo.py` | Coordinate conversion, scale math | ✓ Yes | |
+| `TrailPrint3D/utils/presets.py` | CSV preset load/save | Not needed | |
+| `TrailPrint3D/utils/metadata.py` | Custom property tags on objects | ✓ Yes | Useful for identifying objects post-generation |
+| `TrailPrint3D/utils/text_objects.py` | HexagonOuterText, InnerText, etc. | Optional | Only needed for text-shape modes |
+| `TrailPrint3D/constants.py` | Size thresholds, cache paths | ✓ Yes | Cache paths need redirecting to `OUTPUT_DIR` |
+| `TrailPrint3D/progress.py` | GUI progress overlay (HTML web panel) | Not needed | Stub out; logging replaces it |
+| `TrailPrint3D/addon_preferences.py` | Blender preferences UI | Not needed | API keys pass via env vars |
+
+---
+
+### Headless blockers and mitigations
+
+| Blocker | Location | Mitigation |
+|---------|----------|-----------|
+| `bpy.context.screen.areas` iteration (shading switch, view3d) | `generation.py:1204`, `terrain.py:469` | Wrap in `try/except AttributeError` — cosmetic only |
+| `zoom_camera_to_selected()` calls | `generation.py` multiple | Wrap in `try/except` — cosmetic only |
+| `_progress.ProgressOverlay.get().start()` / `.update()` | `generation.py` throughout | Replace with a no-op stub class injected before script run |
+| `addon_preferences.get_prefs()` (default export folder, API key) | `generation.py`, `elevation.py` | Stub `get_prefs()` to return an object with values from env vars |
+| `customThumbnail()` | `export.py:240` | Skip entirely — not needed for web preview |
+| `bpy.ops.render.opengl()` | `export.py:295` | Skipped (part of `customThumbnail`) |
+| `bpy.utils.user_resource('CONFIG')` in `constants.py` | `constants.py` | Override cache dir to `OUTPUT_DIR/cache` before importing |
+| `bpy.context.scene.tp3d.*` property reads everywhere | All util modules | Inject a minimal `tp3d` property group from JSON settings before calling any util |
+
+---
+
+### Settings exposed to the web UI (from props.py)
+
+**Core generation**
+- `shape`: HEXAGON, SQUARE, CIRCLE (free tier); OCTAGON, ELLIPSE, HEART (premium — skip for now)
+- `objSize`: int, 5–10000 mm (default 100)
+- `num_subdivisions`: int, 1–10 (default 4; preview will use 3)
+- `scaleElevation`: float, 0–10000 (default 1)
+- `pathThickness`: float, 0.1–5 mm (default 1.2)
+- `minThickness`: float, 0.5–1000 mm (default 2)
+- `shapeRotation`: int, -360–360 (default 0)
+- `fixedElevationScale`: bool (default False)
+- `overwritePathElevation`: bool (default True)
+
+**Elevation source**
+- `api`: TERRAIN-TILES (default), OPENTOPODATA, OPEN-ELEVATION, OPENTOPOGRAPHY
+- `dataset`: aster30m (default for opentopodata), mapzen (terrain-tiles default)
+
+**Map offset**
+- `xTerrainOffset`: float (default 0)
+- `yTerrainOffset`: float (default 0)
+
+**Elements (OSM overlays)**
+- `col_wPondsActive`, `col_wSmallRiversActive`, `col_wBigRiversActive`: bool (water)
+- `col_fActive`: bool (forests)
+- `col_cActive`: bool (city boundaries)
+- `col_grActive`: bool (greenspace)
+- `el_bActive`: bool (buildings)
+- `el_sBigActive`, `el_sMedActive`, `el_sSmallActive`: bool (roads)
+
+**Single color mode**
+- `singleColorMode`: bool (for single-extrusion printers)
+- `elementMode`: PAINT (default), SINGLECOLORMODE_REMESH, SEPARATE
+
+---
+
+### Key architectural finding: headless viability
+
+**Verdict: HIGH confidence the full pipeline runs in `blender --background --python`.** Blender 4.x supports all mesh/modifier operations headlessly. The only GUI-bound code is the viewport shading switch, camera zoom, and 3MF thumbnail render — none of which affect the geometry or output files. All network I/O (Terrarium tiles, OSM Overpass) uses Python `requests` and runs independently of the Blender window.
+
+**Approach for `scripts/generate_terrain.py`**:
+1. Accept CLI args: `--gpx <path>`, `--settings <json_path>`, `--output <path>`, `--mode preview|export`, `--format stl|obj|3mf|glb`
+2. Before importing any addon module, monkey-patch `constants.py` to redirect cache dirs to `$OUTPUT_DIR/cache`
+3. Stub out `ProgressOverlay`, `WarningsOverlay`, `addon_preferences.get_prefs()`, all `screen.areas` calls
+4. Load settings JSON and assign all props to `bpy.context.scene.tp3d`
+5. Call `runGeneration(0)` (type 0 = single GPX file + trail)
+6. After generation, export: glTF/GLB for preview (`bpy.ops.export_scene.gltf()`), or STL/OBJ/3MF for export
+7. Print progress as JSON lines to stdout for the Celery task to parse
+
+---
+
+### Decision — Generate terrain script strategy (2026-05-20)
+- **Decided**: Monkey-patch constants + stub GUI dependencies, then call `runGeneration(0)` directly inside headless Blender. Do not rewrite the pipeline from scratch.
+- **Why**: Minimizes code duplication; guarantees parity with the addon's output; lower risk.
+- **Rejected**: Full rewrite of terrain generation in pure Python outside Blender.
+- **Rejected Why**: Enormous scope, high visual-mismatch risk, defeats purpose of using Blender.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+### Decision — Preview settings (2026-05-20)
+- **Decided**: Preview mode uses `num_subdivisions=3`, disables all OSM elements (water, forest, city, buildings, roads), exports glTF binary (`.glb`). Full-res export uses user settings.
+- **Why**: Eliminates OSM API latency and reduces vertex count for fast Three.js rendering. User can enable elements for final export.
+- **Rejected**: Identical settings for preview and export.
+- **Rejected Why**: OSM fetch adds 10–60s per element; preview doesn't benefit from it.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+---
+
+## Decisions
+
+<!-- Entries will be added here as decisions are made. -->
+
+---
+
+## Phase Completion Tracker
+
+- [x] Phase 1: Repository Analysis
+- [ ] Phase 2: API Contract
+- [ ] Phase 3: Backend Core
+- [ ] Phase 4: Blender Script
+- [ ] Phase 5: Frontend Shell
+- [ ] Phase 6: Preview Integration
+- [ ] Phase 7: Export Integration
+- [ ] Phase 8: Docker Packaging
