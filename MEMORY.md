@@ -111,3 +111,49 @@ The analysis agent proposed several extensions beyond the brief. The following c
 4. **DEM cache strategy.** `ELEVATION_CACHE_DIR` env var is defined. Simplest: point the `elevation` package at this directory and rely on its built-in tile cache. Confirm this is acceptable vs. a custom cache layer.
 
 These will be resolved in the next user exchange before Phase 2 design is finalized.
+
+### Phase 2 design inputs - user resolutions for the four ambiguities
+
+- **Decided (Q-frame-style)**: "Frame style" maps to a single float parameter `frame_thickness_mm`. The frame is the boundary polygon extruded vertically by this thickness; no separate border width.
+- **Why**: Simplest viable interpretation; matches `trimesh.creation.extrude_polygon`; one number is enough for MVP.
+- **Rejected**: Border-width + thickness pair; preset style enum (flat/raised/beveled).
+- **Rejected Why**: Extra UI surface and code for a Phase 1 MVP that does not require them.
+- **Flagged By**: User
+- **Confidence**: High
+
+- **Decided (Q-bbox-padding)**: Padding is expressed as a fraction of track extent — `bbox_padding_percent: float` in `[0.0, 1.0]`, default `0.1`. DEM bbox = track bbox grown by that fraction in each direction.
+- **Why**: Scale-invariant across short loops and long routes. Single field.
+- **Rejected**: Absolute meters; dual mode + value fields.
+- **Rejected Why**: Absolute meters gives inconsistent visual padding across track sizes; dual-mode adds API surface and validation work.
+- **Flagged By**: User
+- **Confidence**: High
+
+- **Decided (Q-track-cross-section)**: Phase 1 track is circular only. `track_thickness_mm` is the **diameter** of the tube. Rectangular cross-section is Phase 2.
+- **Why**: One parameter matches the brief's "track thickness" panel item exactly. Rectangular adds two parameters (width + height) and more extrusion code for no MVP value.
+- **Rejected**: Phase 1 selector for circle | rectangle.
+- **Rejected Why**: Scope creep against the brief's single "track thickness" exposure.
+- **Flagged By**: User
+- **Confidence**: High
+- **Note**: Treating `track_thickness_mm` as diameter is an interpretation. Will document in code and revisit if the user expected radius.
+
+- **Decided (Q-dem-cache)**: A thin custom cache layer lives inside `pipeline/terrain.py` (not a separate module). It keys on `(min_lat, min_lon, max_lat, max_lon, resolution_m)` rounded to a stable precision (4 decimal degrees = ~11 m), stores GeoTIFFs under `ELEVATION_CACHE_DIR`, and reads them back on cache hits. The `elevation` package writes into the same directory so its tiles are reused.
+- **Why**: User chose custom over relying on the `elevation` package's internal cache. Custom cache gives a single deterministic key per request and lets us see hits/misses for the "near-instant preview when DEM is cached" requirement in the brief.
+- **Rejected**: Relying only on the `elevation` package's built-in tile cache.
+- **Rejected Why**: Per user choice; also harder to assert cache hits in tests when control is delegated to an external package.
+- **Flagged By**: User
+- **Confidence**: Medium (the bbox-rounded key is sensible but only proven once the pipeline is implemented; will revisit if it misses obvious overlaps).
+
+### Phase 2 - Pipeline design locked
+
+- **Decided**: Pipeline public surface is defined in `docs/phase2_pipeline_design.md`. Six modules (`terrain`, `track`, `frame`, `assembly`, `export`, `generate`). `GenerateSettings` is a Pydantic model in `backend/app/models.py` with 5 user-facing fields and 4 internal defaults. `generate()` returns a `GenerateResult` with output path, duration, cache hit, and track stats. Manifold engine is the only boolean backend — failure raises, no silent fallback.
+- **Why**: This is the smallest surface that satisfies the brief's Phase 1 MVP. Every signature has one obvious job; nothing speculative.
+- **Rejected**: Re-validation inside pipeline functions; multi-engine boolean fallback chain; exposing internal subdivisions in the API but not the UI as a separate concept.
+- **Rejected Why**: Pydantic at the API boundary is sufficient. A multi-engine fallback for booleans was tempting but hides real bugs — print safety beats apparent robustness here. Subdivisions are exposed so power users can override via the API; UI just uses the defaults.
+- **Flagged By**: Integration Lead
+- **Confidence**: High on the module split and orchestrator contract; Medium on the Frenet-frame approach (parallel-transport rotation-minimizing frame is the planned implementation but only validated in Phase 4 against a synthetic switchback fixture).
+
+### Phase 2 - Open questions to resolve before Phase 3
+
+None blocking. Phase 3 (FastAPI app + Celery wiring + `/health`) can proceed
+using the locked schema. The remaining unknowns are implementation details
+that surface during Phase 4.
