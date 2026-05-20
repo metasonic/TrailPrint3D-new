@@ -274,6 +274,51 @@ Progress values mapped to Blender pipeline phases:
 
 ---
 
+## Phase 3 — Backend Core (2026-05-20)
+
+**Test result**: 15/15 passing (`pytest backend/tests/`)
+
+### Files created
+
+| File | Purpose |
+|------|---------|
+| `backend/pyproject.toml` | Poetry config; fastapi, uvicorn, celery[redis], pydantic-settings, aiofiles, redis |
+| `backend/app/config.py` | `Settings(BaseSettings)` — all 10 env vars validated at startup |
+| `backend/app/models.py` | Pydantic models: `GenerationSettings`, `JobAccepted`, `JobStatus`, `HealthStatus` |
+| `backend/app/celery_app.py` | Celery instance, Redis broker/backend, task tracking config |
+| `backend/app/tasks.py` | `generate_preview` + `generate_export` tasks; invoke Blender subprocess, parse JSON progress lines |
+| `backend/app/main.py` | FastAPI app with lifespan (OUTPUT_DIR mkdir), `/files` static mount, route registration |
+| `backend/app/routes/preview.py` | `POST /api/v1/preview` — validates file, enforces preview overrides, enqueues task |
+| `backend/app/routes/export.py` | `POST /api/v1/export` — validates file + format, enqueues task |
+| `backend/app/routes/jobs.py` | `GET /api/v1/jobs/{job_id}` — maps Celery states to JobStatus |
+| `backend/app/routes/health.py` | `GET /api/v1/health` — pings Redis + Celery inspect |
+| `backend/tests/conftest.py` | AsyncClient fixture, minimal GPX fixture |
+| `backend/tests/test_health.py` | 3 health-check tests (ok, redis-down, no-workers) |
+| `backend/tests/test_jobs.py` | 12 tests: preview/export validation, job status state machine |
+
+### Blender–Celery progress protocol
+The Blender script must emit lines matching `{"progress": N, "phase": "..."}` to stdout.
+`tasks.py` reads these line-by-line and calls `self.update_state(state="PROGRESS", meta=...)`.
+
+### Bug fixed during tests
+`jobs.py` originally deferred `from app.config import settings` inside the function body,
+making it invisible to `patch("app.routes.jobs.settings")`. Moved to module-level import.
+Logged in ERRORS.md.
+
+### Decision — Task ID equals Job ID (2026-05-20)
+- **Decided**: `apply_async(task_id=job_id)` where `job_id` is the UUID generated in the route.
+- **Why**: Single identifier for the entire job lifecycle; frontend polls one URL with one ID.
+- **Rejected**: Let Celery auto-generate the task ID and store a separate mapping.
+- **Rejected Why**: Unnecessary indirection; no persistent store to hold the mapping.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+### Decision — Job-exists check via filesystem (2026-05-20)
+- **Decided**: The job status endpoint distinguishes "unknown job" from "queued but not started" by checking whether `OUTPUT_DIR/{job_id}/` exists (created by the route handler at enqueue time).
+- **Why**: Celery returns `PENDING` for both states; filesystem presence is the only reliable discriminator without a DB.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
 ## Decisions
 
 <!-- Entries will be added here as decisions are made. -->
@@ -284,7 +329,7 @@ Progress values mapped to Blender pipeline phases:
 
 - [x] Phase 1: Repository Analysis
 - [x] Phase 2: API Contract
-- [ ] Phase 3: Backend Core
+- [x] Phase 3: Backend Core
 - [ ] Phase 4: Blender Script
 - [ ] Phase 5: Frontend Shell
 - [ ] Phase 6: Preview Integration

@@ -1,0 +1,29 @@
+[tool.poetry]
+name = "trailprint3d-backend"
+version = "0.1.0"
+description = "TrailPrint3D self-hosted web backend and Celery worker"
+authors = []
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.115"
+uvicorn = {extras = ["standard"], version = "^0.34"}
+celery = {extras = ["redis"], version = "^5.4"}
+pydantic-settings = "^2.7"
+python-multipart = "^0.0.20"
+aiofiles = "^24.1"
+redis = "^5.2"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3"
+pytest-asyncio = "^0.24"
+httpx = "^0.28"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
