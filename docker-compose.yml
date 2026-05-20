@@ -41,7 +41,7 @@ services:
       - app.celery_app
       - worker
       - --loglevel=info
-      - --concurrency=1    # one Blender process at a time per worker replica
+      - --concurrency=1    # one Blender process per replica — scale replicas, not concurrency
     environment:
       REDIS_URL: redis://redis:6379/0
       OUTPUT_DIR: /app/output
@@ -52,6 +52,13 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    deploy:
+      replicas: 2           # 2 concurrent jobs by default; raise with --scale worker=N
+      resources:
+        limits:
+          memory: 3g        # OOM-kills runaway jobs cleanly; prevents host thrash
+        reservations:
+          memory: 1g
 
   frontend:
     build:

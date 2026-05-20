@@ -49,9 +49,15 @@ async def create_export_job(
     async with aiofiles.open(gpx_path, "wb") as f:
         await f.write(content)
 
+    # --- Apply server-side resource guardrails ---
+    export_dict = gen_settings.model_dump()
+    # Cap subdivisions at 6: subdivision 7+ exceeds 2.5M vertices and uses 4-8 GB RAM.
+    # This covers every printable resolution a desktop FDM printer can use.
+    export_dict["num_subdivisions"] = min(export_dict["num_subdivisions"], 6)
+
     # --- Enqueue ---
     generate_export.apply_async(
-        args=[job_id, str(gpx_path), gen_settings.model_dump(), format.value],
+        args=[job_id, str(gpx_path), export_dict, format.value],
         task_id=job_id,
     )
 
