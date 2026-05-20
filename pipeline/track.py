@@ -122,12 +122,15 @@ def build_track_tube(
     if len(projected_track) < 2:
         raise ValueError("Track needs at least 2 points to extrude a tube")
 
+    # Terrain was first translated by -utm_centre (in UTM meters), then scaled
+    # by xy_scale. The track must follow the same order: shift in UTM meters,
+    # then scale — otherwise the track lands tens of km off origin while the
+    # terrain sits at the origin in mm space.
+    utm_centre_x, utm_centre_y = terrain_mesh.metadata.get("utm_centre", (0.0, 0.0))
     scaled = projected_track.copy()
-    scaled[:, 0] *= xy_scale
-    scaled[:, 1] *= xy_scale
+    scaled[:, 0] = (scaled[:, 0] - utm_centre_x) * xy_scale
+    scaled[:, 1] = (scaled[:, 1] - utm_centre_y) * xy_scale
     scaled[:, 2] *= z_scale
-    scaled[:, 0] -= terrain_mesh.metadata.get("centre_x", 0.0)
-    scaled[:, 1] -= terrain_mesh.metadata.get("centre_y", 0.0)
     snapped = _cast_track_onto_mesh(scaled, terrain_mesh)
     snapped[:, 2] += diameter_mm * 0.5  # lift slightly so the union doesn't z-fight
 

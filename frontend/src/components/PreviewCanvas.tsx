@@ -43,18 +43,38 @@ export function PreviewCanvas({ url }: Props) {
     loader.load(
       url,
       (gltf) => {
-        const root = gltf.scene;
-        // Centre + frame model in view
-        const box = new THREE.Box3().setFromObject(root);
+        // trimesh exports with Z-up; three.js renders Y-up. Wrap the model
+        // in a Group, rotate the inner model to convert Z-up -> Y-up, then
+        // centre + scale + drop onto the grid via the outer Group's
+        // transform. The wrapper keeps math simple: T(position) * S(scale)
+        // applied to a pre-oriented child.
+        const model = gltf.scene;
+        model.rotation.x = -Math.PI / 2;
+        const wrapper = new THREE.Group();
+        wrapper.add(model);
+        wrapper.updateMatrixWorld(true);
+
+        const box = new THREE.Box3().setFromObject(wrapper);
         const size = box.getSize(new THREE.Vector3());
         const centre = box.getCenter(new THREE.Vector3());
-        root.position.sub(centre);
+
+        const target = 100; // model frame size in mm (camera frames ~target)
         const maxExtent = Math.max(size.x, size.y, size.z) || 1;
-        const target = 100; // mm of camera frame
         const factor = target / maxExtent;
-        root.scale.setScalar(factor);
-        state.scene.add(root);
-        currentModelRef.current = root;
+
+        // Position is applied in world units (after scale); compute it so the
+        // model centre lands at (0, target/2, 0) — half-height above the grid.
+        wrapper.scale.setScalar(factor);
+        wrapper.position.set(-centre.x * factor, -box.min.y * factor, -centre.z * factor);
+
+        state.scene.add(wrapper);
+        currentModelRef.current = wrapper;
+
+        // Frame the camera around the now-positioned model.
+        const dist = target * 1.6;
+        state.camera.position.set(dist, dist * 0.8, dist);
+        state.controls.target.set(0, target * 0.15, 0);
+        state.controls.update();
       },
       undefined,
       (err) => {
