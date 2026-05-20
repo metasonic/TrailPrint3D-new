@@ -157,3 +157,46 @@ These will be resolved in the next user exchange before Phase 2 design is finali
 None blocking. Phase 3 (FastAPI app + Celery wiring + `/health`) can proceed
 using the locked schema. The remaining unknowns are implementation details
 that surface during Phase 4.
+
+### Phase 3 - Backend Core delivered and live-verified
+
+- **Decided**: Single Poetry project at the repo root with two packages, `backend/` and `pipeline/`, sharing one virtualenv. `GenerateSettings` lives in `backend/app/models.py` and is imported by the pipeline (one direction only; pipeline never imports FastAPI or Celery).
+- **Why**: Mono-project keeps imports clean, avoids relative-path hacks, and lets the Phase 8 Dockerfile build one image with two entry points (uvicorn vs celery worker). Splitting would have required either a shared models package (more surface) or duplication (worse).
+- **Rejected**: Two separate Poetry projects; placing `GenerateSettings` in `pipeline/` and having `backend` import it.
+- **Rejected Why**: The pipeline must not depend on FastAPI/Celery (so it stays CLI-testable in Phase 4). Putting the schema where the API boundary lives keeps validation centred at the boundary.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+- **Decided**: API shape is multipart `file=` + form field `settings=<JSON>` (plus `format=` for `/export`). Pydantic validates the JSON string at request time and returns 422 on bad fields.
+- **Why**: Standard REST pattern for "file + structured metadata". No base64 bloat, browsers handle it natively.
+- **Rejected**: JSON body with base64-encoded GPX.
+- **Rejected Why**: Larger payload, more client complexity, no benefit.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+- **Decided**: Job status mapping uses `task_track_started=True` and translates Celery states (PENDING/RECEIVED → pending, STARTED/RETRY → processing, SUCCESS → completed, FAILURE/REVOKED → failed). Unknown job IDs return pending (Celery cannot distinguish "never seen" from "queued"). Completion responses include `result_url=/files/{job_id}.{ext}`; failures include `error=str(exception)`.
+- **Why**: Matches the brief's four-state contract with minimal logic. The PENDING-on-unknown behaviour is inherent to Celery and surfacing it as-is is simpler than fronting with a Redis-side tracking set.
+- **Rejected**: Tracking job IDs in a Redis set on enqueue to distinguish unknown from pending.
+- **Rejected Why**: Adds bookkeeping that would have to be kept in sync with Celery's own state, with no concrete UX benefit in Phase 1.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+- **Decided**: Five bash scripts under `scripts/`: `test.sh`, `lint.sh`, `dev-up.sh`, `dev-down.sh`, `curl-smoke.sh`. `dev-up` runs Redis + uvicorn + a solo-pool Celery worker in the background, writing PIDs to `/tmp/tp3d.pids` and logs to `.dev-logs/`.
+- **Why**: Per Rule 8. Solo pool avoids fork-on-load issues during dev; in production the Docker worker can use the default prefork pool. The smoke script exercises `/health → POST /preview → poll /jobs/{id}` and accepts a `failed` terminal state in Phase 3 because the pipeline stub is intentional.
+- **Rejected**: Running services in foreground tabs/tmux.
+- **Rejected Why**: Not reproducible in CI or in agent sessions.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+- **Decided**: Test layout: `tests/test_models.py` (GenerateSettings validation), `tests/test_pipeline_stub.py` (verifies the pipeline import contract), `tests/test_api.py` (uses `fastapi.testclient`; the one job-status test that needs Celery is `@pytest.mark.skipif`-gated on Redis being reachable).
+- **Why**: Unit-level coverage runs without infra; the Redis-dependent test runs both via the dev stack and in CI when Redis is up. The curl smoke script remains the authoritative end-to-end verification per the brief.
+- **Rejected**: Mocking Celery for the job-status test.
+- **Rejected Why**: A Celery mock proves nothing about the real backend-state mapping, which is the only thing worth testing here.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+- **Decided**: Live verification recorded — `/health` returns `{status:ok, redis:true, celery:true}`, `POST /preview` with `Cluj_Eco_Trail.gpx` returns a job id, and `GET /jobs/{id}` reports `failed` with the expected `NotImplementedError` message surfaced. 8/8 pytest tests pass, ruff clean, mypy strict clean.
+- **Why**: Phase 3 acceptance criteria from the brief are met.
+- **Rejected**: n/a
+- **Flagged By**: Integration Lead
+- **Confidence**: High

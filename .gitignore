@@ -15,3 +15,24 @@ build.py
 # Other cache
 __pycache__/
 .claude
+
+# Python / Poetry
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+
+# Local dev artifacts
+.dev-output/
+.dev-elevation-cache/
+.dev-logs/
+.env
+
+# OS
+.DS_Store
+
+# Redis on-disk persistence (we run it ephemeral but it may still dump)
+dump.rdb
