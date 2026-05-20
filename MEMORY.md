@@ -200,3 +200,60 @@ that surface during Phase 4.
 - **Rejected**: n/a
 - **Flagged By**: Integration Lead
 - **Confidence**: High
+
+### Phase 4 - Pipeline implementation and live end-to-end pass
+
+- **Decided**: Geometric assembly is `intersect(terrain, frame_clip_volume) → union(clipped_terrain, frame_base, track_tube)`. The frame's 2D shape (square/circle/hexagon) defines the model's XY footprint; the terrain is clipped to that outline by an intermediate boolean intersect; the visible frame base sits below the terrain at z ∈ [-frame_thickness_mm, 0]; the track tube hugs the clipped terrain surface.
+- **Why**: Without the clip step, the `shape` parameter is meaningless — terrain corners would poke past circular/hexagonal frame outlines. The brief's "boolean union" instruction is the *final* combine; an intermediate clip is required to make the shape parameter visible.
+- **Rejected**: Literal three-mesh union with no clip step; clipping with shapely 2D booleans then re-triangulating; computing a "shaped terrain" by clamping vertices outside the shape (would leave holes).
+- **Rejected Why**: Literal union ignores shape. 2D clip + re-triangulation loses the elevation data on cut edges. Vertex clamping is not watertight.
+- **Flagged By**: Integration Lead
+- **Confidence**: Medium — geometrically defensible and produces visually correct output, but the user may want different semantics (e.g. frame as a raised border rather than a base). Worth a check-in after they look at the rendered GLB.
+
+- **Decided**: Track points are cast onto the DEM surface (Z replaced by terrain Z at the same XY) before tube extrusion. GPX-recorded elevations are discarded for visualisation purposes.
+- **Why**: Matches the original addon's `overwrite_path_elevation=True` default. GPX elevations are noisy (consumer GPS) and frequently disagree with the DEM by tens of meters.
+- **Rejected**: Using GPX elevations directly.
+- **Rejected Why**: Track would float above or sink into the terrain, breaking the visual.
+- **Flagged By**: Integration Lead
+- **Confidence**: High (matches addon behaviour and produces correct visual).
+
+- **Decided**: Track tube uses `trimesh.creation.sweep_polygon` with a shapely circular cross-section. Hand-rolled rotation-minimizing-frame implementation was deleted.
+- **Why**: First attempt (custom Frenet/parallel-transport frame + manual cap fan) produced a non-watertight mesh — cap winding was off and the final union failed. `sweep_polygon` handles framing, caps, and watertightness as one primitive.
+- **Rejected**: Hand-rolled implementation; cylinder-per-segment + union (would be slow and produce surface artifacts at joints).
+- **Rejected Why**: Reinventing a well-tested trimesh primitive when there's no MVP-level reason to.
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
+
+- **Decided**: Terrain mesh is a watertight box-with-heightmap-top, hand-stitched from a grid (top) + grid (bottom) + four side walls. Winding is fixed globally with `mesh.fix_normals()` after construction (one-shot reorient).
+- **Why**: trimesh has no direct "heightmap to watertight prism" primitive in the installed version. Hand-stitching is simple and gives full control over subdivisions. `fix_normals` handles the global-winding ambiguity in a single line.
+- **Rejected**: `trimesh.creation.extrude_triangulation` of a single top surface (gives a flat-bottom open mesh, not a closed box); manifold3d's `linear_extrude` (would require porting the heightmap into manifold's API, more surface).
+- **Rejected Why**: Both alternatives add code without simplifying anything.
+- **Flagged By**: Integration Lead
+- **Confidence**: High for the construction; Medium-High for performance — at the largest export subdivisions the terrain has ~17k vertices, fine for the brief's 20-30 concurrent jobs / 8GB target.
+
+- **Decided**: `subdivisions` field semantics: higher value → finer detail. Internally maps to a downsampling stride via `stride = max(1, 8 // subdivisions)`. Preview default 2 → stride 4; export default 4 → stride 2.
+- **Why**: Field name suggests "more = better" which is the intuitive direction. Stride is the actual implementation detail.
+- **Rejected**: Exposing stride directly; preview_subdivisions and export_subdivisions being equal (would defeat the preview-fast / export-fine distinction).
+- **Rejected Why**: Stride is an implementation detail callers shouldn't have to reason about. Equal subdivisions kills the preview-mode purpose.
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
+
+- **Decided**: Manifold boolean engine is required (no fallback). `assembly.union()` and `assembly.intersect()` both check `manifold3d` import availability and verify the result `is_volume` before returning.
+- **Why**: Brief mandates Manifold. A silent fallback to trimesh's other engines would let non-printable meshes through.
+- **Rejected**: Multi-engine fallback (manifold → scad → blender). 
+- **Rejected Why**: Hides real bugs; non-watertight meshes break slicers.
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
+
+- **Decided**: System dependencies needed for the worker container: `gdal-bin` (for the `elevation` package's bbox-clip step which shells out to `gdal_translate`) and `libspatialindex-dev` (for `rtree`, used by trimesh's ray spatial index). Logged here so Phase 8 Dockerfile installs them.
+- **Why**: Both surfaced as runtime errors during pipeline implementation. The `elevation` package's design uses GDAL CLI rather than the Python bindings.
+- **Rejected**: Replacing the `elevation` package with direct tile downloads + rasterio stitching.
+- **Rejected Why**: Brief mandates the `elevation` package by name. The GDAL/rtree system deps are standard apt-installable.
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
+
+- **Decided**: Live verification recorded — pipeline runs end-to-end on Cluj_Eco_Trail.gpx. Preview: 6.9 MB GLB in 2.76 s. Export: 21 MB STL in 3.28 s. Final mesh: 194 k verts, 388 k faces, watertight=True. HTTP route via FastAPI completes job pending → processing → completed in ~3 s, and `/files/{id}.glb` returns 200 with `Content-Type: model/gltf-binary`. 9/9 pytest tests (2 skip on cache state), ruff clean, mypy strict clean.
+- **Why**: Phase 4 acceptance criteria from the brief are met.
+- **Rejected**: n/a
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
