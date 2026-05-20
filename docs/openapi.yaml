@@ -1,0 +1,501 @@
+openapi: 3.1.0
+
+info:
+  title: TrailPrint3D Web API
+  version: 1.0.0
+  description: >
+    REST API for the TrailPrint3D self-hosted web application.
+    Accepts GPX files, enqueues headless Blender terrain generation jobs,
+    and serves the resulting 3D preview (GLB) and export files (STL/OBJ/3MF).
+
+servers:
+  - url: /api/v1
+
+paths:
+
+  # ---------------------------------------------------------------------------
+  # Preview
+  # ---------------------------------------------------------------------------
+  /preview:
+    post:
+      operationId: createPreviewJob
+      summary: Enqueue a preview generation job
+      description: >
+        Accepts a GPX file and optional settings. Enqueues a Celery task that
+        runs Blender headlessly to generate a lightweight GLB preview mesh.
+        Preview mode forces num_subdivisions=3 and disables all OSM element
+        fetches to minimise latency. Returns a job ID for polling.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - gpx_file
+              properties:
+                gpx_file:
+                  type: string
+                  format: binary
+                  description: GPX (or IGC) track file. Max size controlled by MAX_UPLOAD_SIZE_MB.
+                settings:
+                  $ref: '#/components/schemas/GenerationSettings'
+            encoding:
+              settings:
+                contentType: application/json
+      responses:
+        '202':
+          description: Job accepted and queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          $ref: '#/components/responses/FileTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  # ---------------------------------------------------------------------------
+  # Export
+  # ---------------------------------------------------------------------------
+  /export:
+    post:
+      operationId: createExportJob
+      summary: Enqueue a full-resolution export job
+      description: >
+        Accepts a GPX file, optional settings, and a target format.
+        Enqueues a Celery task that runs the full Blender pipeline at the
+        requested resolution, then exports to STL, OBJ, or 3MF.
+        Returns a job ID for polling.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - gpx_file
+                - format
+              properties:
+                gpx_file:
+                  type: string
+                  format: binary
+                  description: GPX (or IGC) track file. Max size controlled by MAX_UPLOAD_SIZE_MB.
+                format:
+                  type: string
+                  enum: [stl, obj, 3mf]
+                  default: stl
+                  description: Output file format.
+                settings:
+                  $ref: '#/components/schemas/GenerationSettings'
+            encoding:
+              settings:
+                contentType: application/json
+      responses:
+        '202':
+          description: Job accepted and queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '413':
+          $ref: '#/components/responses/FileTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  # ---------------------------------------------------------------------------
+  # Job status
+  # ---------------------------------------------------------------------------
+  /jobs/{job_id}:
+    get:
+      operationId: getJobStatus
+      summary: Poll job status and retrieve result URL
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Current job state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatus'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ---------------------------------------------------------------------------
+  # Health
+  # ---------------------------------------------------------------------------
+  /health:
+    get:
+      operationId: healthCheck
+      summary: Service health check
+      description: >
+        Returns the health of the API process, Redis connection, and Celery
+        worker reachability. Intended for Docker health checks and monitoring.
+      responses:
+        '200':
+          description: All systems operational.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '503':
+          description: One or more dependencies are unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+# ===========================================================================
+# Components
+# ===========================================================================
+components:
+
+  schemas:
+
+    # -------------------------------------------------------------------------
+    # Settings — mirrors every user-adjustable property from the addon's
+    # props.py. All fields are optional; omitted fields use their defaults.
+    # -------------------------------------------------------------------------
+    GenerationSettings:
+      type: object
+      description: >
+        All parameters that control terrain generation. Mirrors the
+        TrailPrint3D Blender addon's adjustable properties. Every field is
+        optional; defaults match the addon's defaults unless noted.
+      properties:
+
+        # --- Shape & size ---
+        shape:
+          type: string
+          enum: [HEXAGON, SQUARE, CIRCLE]
+          default: HEXAGON
+          description: Map outline shape.
+
+        obj_size:
+          type: integer
+          minimum: 5
+          maximum: 10000
+          default: 100
+          description: Outer dimension of the map in millimetres.
+
+        rectangle_height:
+          type: integer
+          minimum: 5
+          maximum: 10000
+          default: 100
+          description: Height of the rectangle when shape=SQUARE and a non-square aspect ratio is desired.
+
+        shape_rotation:
+          type: integer
+          minimum: -360
+          maximum: 360
+          default: 0
+          description: Rotation of the map shape in degrees.
+
+        # --- Terrain & elevation ---
+        num_subdivisions:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 4
+          description: >
+            Mesh resolution. Higher = more detail but slower generation.
+            Recommended max 8. Ignored in preview mode (forced to 3).
+
+        scale_elevation:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 10000
+          default: 1.0
+          description: Multiplier applied to elevation data. 1.0 = real-world scale.
+
+        fixed_elevation_scale:
+          type: boolean
+          default: false
+          description: >
+            When true, forces the elevation range to span exactly 10 mm
+            (before scale_elevation is applied). Useful for consistent
+            comparison between maps.
+
+        min_thickness:
+          type: number
+          format: float
+          minimum: 0.5
+          maximum: 1000
+          default: 2.0
+          description: Additional base thickness added below the lowest terrain point, in mm.
+
+        overwrite_path_elevation:
+          type: boolean
+          default: true
+          description: >
+            When true, each track point is ray-cast onto the terrain mesh
+            so the trail sits on the surface. Disable only if GPX elevation
+            data is trusted and terrain data is poor quality.
+
+        x_terrain_offset:
+          type: number
+          format: float
+          default: 0.0
+          description: Shift the terrain centre horizontally in the X axis (Blender units ≈ mm).
+
+        y_terrain_offset:
+          type: number
+          format: float
+          default: 0.0
+          description: Shift the terrain centre horizontally in the Y axis.
+
+        # --- Track ---
+        path_thickness:
+          type: number
+          format: float
+          minimum: 0.1
+          maximum: 5.0
+          default: 1.2
+          description: Thickness of the extruded trail curve in mm.
+
+        # --- Elevation API ---
+        elevation_api:
+          type: string
+          enum: [TERRAIN-TILES, OPENTOPODATA, OPEN-ELEVATION]
+          default: TERRAIN-TILES
+          description: >
+            Elevation data source. TERRAIN-TILES (AWS Terrarium) is the
+            default: no API key required, global coverage, fastest.
+
+        opentopodata_dataset:
+          type: string
+          enum: [aster30m, srtm30m, mapzen, ned10m, eudem25m, nzdem8m]
+          default: aster30m
+          description: Dataset to use when elevation_api=OPENTOPODATA.
+
+        # --- OSM elements (all off by default for preview) ---
+        water_ponds:
+          type: boolean
+          default: false
+          description: Include ponds and lakes.
+
+        water_small_rivers:
+          type: boolean
+          default: false
+          description: Include streams, canals, and minor waterways.
+
+        water_big_rivers:
+          type: boolean
+          default: false
+          description: Include major named rivers.
+
+        river_width:
+          type: number
+          format: float
+          minimum: 0.1
+          maximum: 10.0
+          default: 1.0
+          description: Thickness multiplier for river ribbons.
+
+        forests:
+          type: boolean
+          default: false
+          description: Include forested areas (OSM landuse=forest/wood).
+
+        city_boundaries:
+          type: boolean
+          default: false
+          description: Include city/town boundaries (OSM place=city/town).
+
+        greenspace:
+          type: boolean
+          default: false
+          description: Include parks, gardens, and urban green areas.
+
+        buildings:
+          type: boolean
+          default: false
+          description: Include 3D building footprints. Requires map < 30 km.
+
+        building_height_multiplier:
+          type: number
+          format: float
+          minimum: 0.01
+          maximum: 10.0
+          default: 1.0
+          description: Multiplier applied to building heights from OSM data.
+
+        roads_major:
+          type: boolean
+          default: false
+          description: Include motorways and primary roads.
+
+        roads_medium:
+          type: boolean
+          default: false
+          description: Include secondary and tertiary roads.
+
+        roads_minor:
+          type: boolean
+          default: false
+          description: Include residential, service, and footway roads.
+
+        street_width_multiplier:
+          type: number
+          format: float
+          minimum: 0.1
+          maximum: 10.0
+          default: 1.0
+          description: Multiplier applied to road widths.
+
+        # --- Element rendering mode ---
+        element_mode:
+          type: string
+          enum: [PAINT, SINGLECOLORMODE_REMESH, SEPARATE]
+          default: PAINT
+          description: >
+            How OSM overlay elements are rendered.
+            PAINT: elements are face-painted onto the terrain mesh (single STL).
+            SINGLECOLORMODE_REMESH: elements are separate solid objects (multi-colour printing).
+            SEPARATE: elements are individual mesh objects exported separately.
+
+        single_color_mode:
+          type: boolean
+          default: false
+          description: >
+            Project the trail curve onto the terrain as a raised solid instead
+            of a coloured face. Use for single-extrusion printers.
+
+      additionalProperties: false
+
+    # -------------------------------------------------------------------------
+    # Job accepted
+    # -------------------------------------------------------------------------
+    JobAccepted:
+      type: object
+      required: [job_id]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+          description: Opaque identifier for the enqueued job. Use with GET /jobs/{job_id}.
+          example: "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+
+    # -------------------------------------------------------------------------
+    # Job status
+    # -------------------------------------------------------------------------
+    JobStatus:
+      type: object
+      required: [job_id, status, progress]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+          description: >
+            pending    — queued, not yet picked up by a worker.
+            processing — Blender is running.
+            completed  — output file is ready.
+            failed     — terminal error; see the error field.
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: >
+            Percentage complete. 0 while pending. Advances through
+            well-defined pipeline phases during processing.
+            100 when completed or failed.
+        result_url:
+          type: string
+          format: uri
+          nullable: true
+          description: >
+            URL to download the output file (GLB for preview, STL/OBJ/3MF
+            for export). Present only when status=completed.
+          example: "/files/3fa85f64-5717-4562-b3fc-2c963f66afa6/preview.glb"
+        error:
+          type: string
+          nullable: true
+          description: Human-readable error message. Present only when status=failed.
+
+    # -------------------------------------------------------------------------
+    # Health status
+    # -------------------------------------------------------------------------
+    HealthStatus:
+      type: object
+      required: [status, api, redis, celery]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, error]
+          description: Overall health. ok = all checks pass.
+        api:
+          type: string
+          enum: [ok, error]
+        redis:
+          type: string
+          enum: [ok, error]
+          description: Redis connection reachable.
+        celery:
+          type: string
+          enum: [ok, degraded, error]
+          description: >
+            ok = at least one worker is active.
+            degraded = broker reachable but no active workers.
+            error = broker unreachable.
+
+    # -------------------------------------------------------------------------
+    # Error envelope
+    # -------------------------------------------------------------------------
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+
+  # -------------------------------------------------------------------------
+  # Shared responses
+  # -------------------------------------------------------------------------
+  responses:
+
+    BadRequest:
+      description: Malformed request (e.g. not a valid GPX file).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    FileTooLarge:
+      description: Upload exceeds MAX_UPLOAD_SIZE_MB.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFound:
+      description: Job ID not found or expired.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    ValidationError:
+      description: Settings JSON failed schema validation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

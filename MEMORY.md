@@ -178,6 +178,102 @@ Converting the TrailPrint3D Blender addon into a self-hosted web application.
 
 ---
 
+## Phase 2 — API Contract (2026-05-20)
+
+**Spec file**: `docs/openapi.yaml` (OpenAPI 3.1.0)
+
+### Endpoints defined
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/preview` | Upload GPX + settings → returns `{job_id}`. Celery task generates GLB. |
+| POST | `/api/v1/export` | Upload GPX + settings + format → returns `{job_id}`. Celery task generates STL/OBJ/3MF. |
+| GET | `/api/v1/jobs/{job_id}` | Returns `{status, progress, result_url, error}`. |
+| GET | `/api/v1/health` | Returns `{status, api, redis, celery}`. |
+
+### Settings schema (`GenerationSettings`) — field→addon mapping
+
+| API field | addon prop | Type | Default |
+|-----------|-----------|------|---------|
+| `shape` | `shape` | enum HEXAGON/SQUARE/CIRCLE | HEXAGON |
+| `obj_size` | `objSize` | int 5–10000 | 100 |
+| `rectangle_height` | `rectangleHeight` | int 5–10000 | 100 |
+| `shape_rotation` | `shapeRotation` | int -360–360 | 0 |
+| `num_subdivisions` | `num_subdivisions` | int 1–10 | 4 (preview: 3) |
+| `scale_elevation` | `scaleElevation` | float 0–10000 | 1.0 |
+| `fixed_elevation_scale` | `fixedElevationScale` | bool | false |
+| `min_thickness` | `minThickness` | float 0.5–1000 | 2.0 |
+| `overwrite_path_elevation` | `overwritePathElevation` | bool | true |
+| `x_terrain_offset` | `xTerrainOffset` | float | 0.0 |
+| `y_terrain_offset` | `yTerrainOffset` | float | 0.0 |
+| `path_thickness` | `pathThickness` | float 0.1–5 | 1.2 |
+| `elevation_api` | `api` | enum TERRAIN-TILES/OPENTOPODATA/OPEN-ELEVATION | TERRAIN-TILES |
+| `opentopodata_dataset` | `dataset` | enum | aster30m |
+| `water_ponds` | `col_wPondsActive` | bool | false |
+| `water_small_rivers` | `col_wSmallRiversActive` | bool | false |
+| `water_big_rivers` | `col_wBigRiversActive` | bool | false |
+| `river_width` | `col_wStreamWidth` | float 0.1–10 | 1.0 |
+| `forests` | `col_fActive` | bool | false |
+| `city_boundaries` | `col_cActive` | bool | false |
+| `greenspace` | `col_grActive` | bool | false |
+| `buildings` | `el_bActive` | bool | false |
+| `building_height_multiplier` | `el_bHeightMultiplier` | float 0.01–10 | 1.0 |
+| `roads_major` | `el_sBigActive` | bool | false |
+| `roads_medium` | `el_sMedActive` | bool | false |
+| `roads_minor` | `el_sSmallActive` | bool | false |
+| `street_width_multiplier` | `el_sMultiplier` | float | 1.0 |
+| `element_mode` | `elementMode` | enum PAINT/SINGLECOLORMODE_REMESH/SEPARATE | PAINT |
+| `single_color_mode` | `singleColorMode` | bool | false |
+
+### Job status machine
+
+```
+pending → processing → completed
+                    ↘ failed
+```
+
+Progress values mapped to Blender pipeline phases:
+- 0–5%: pending / queued
+- 5–15%: GPX parse + validation
+- 15–35%: elevation fetch (Terrarium tiles)
+- 35–65%: terrain mesh generation + displacement
+- 65–75%: trail curve creation
+- 75–85%: OSM element fetches (export only)
+- 85–95%: boolean operations + finalize
+- 95–100%: file export
+
+### Decision — API field naming (2026-05-20)
+- **Decided**: Use snake_case for all API fields, differing from the addon's camelCase prop names. A mapping table in MEMORY.md bridges the two.
+- **Why**: REST API convention; consistent with FastAPI/Pydantic defaults.
+- **Rejected**: Match the addon's camelCase names exactly.
+- **Rejected Why**: Inconsistent with Python API conventions; would confuse frontend developers.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+### Decision — Settings transport (2026-05-20)
+- **Decided**: Settings sent as a JSON string field (`settings`) inside the multipart form alongside the file upload. Not a separate JSON body endpoint.
+- **Why**: A single multipart request carries both the binary GPX file and structured settings in one HTTP round-trip. Matches how browser `FormData` naturally works.
+- **Rejected**: Two separate endpoints (upload file first, then POST settings with a file reference).
+- **Rejected Why**: Adds a round-trip and a temporary file-reference step with no benefit.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+### Decision — File serving (2026-05-20)
+- **Decided**: Generated files served as static files at `/files/{job_id}/{filename}` from the OUTPUT_DIR volume. FastAPI mounts this as a `StaticFiles` handler.
+- **Why**: Simplest zero-overhead file serving; no streaming proxy needed.
+- **Rejected**: Serve files through a FastAPI streaming endpoint.
+- **Rejected Why**: Unnecessary complexity; static file serving is sufficient and faster.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+### Decision — Preview forces num_subdivisions=3 (logged from Phase 1) (2026-05-20)
+- **Decided**: The backend overrides `num_subdivisions` to 3 and disables all OSM element flags when mode=preview, regardless of what the client sends.
+- **Why**: Keeps preview latency under 15s; OSM elements are irrelevant for geometry preview.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+---
+
 ## Decisions
 
 <!-- Entries will be added here as decisions are made. -->
@@ -187,7 +283,7 @@ Converting the TrailPrint3D Blender addon into a self-hosted web application.
 ## Phase Completion Tracker
 
 - [x] Phase 1: Repository Analysis
-- [ ] Phase 2: API Contract
+- [x] Phase 2: API Contract
 - [ ] Phase 3: Backend Core
 - [ ] Phase 4: Blender Script
 - [ ] Phase 5: Frontend Shell
