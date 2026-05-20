@@ -17,3 +17,124 @@ import Canvas3D from "../components/Canvas3D.astro";
 
   </div>
 </Layout>
+
+<script>
+  import { submitPreview, pollJob } from "../lib/api";
+  import { Viewer3D } from "../lib/viewer";
+
+  // ── DOM refs ────────────────────────────────────────────────────────────
+  const form        = document.getElementById("generation-form")   as HTMLFormElement;
+  const gpxInput    = document.getElementById("gpx-file")          as HTMLInputElement;
+  const btnPreview  = document.getElementById("btn-preview")       as HTMLButtonElement;
+  const canvas      = document.getElementById("canvas-3d")         as HTMLCanvasElement;
+  const placeholder = document.getElementById("canvas-placeholder") as HTMLElement;
+  const overlay     = document.getElementById("progress-overlay")  as HTMLElement;
+  const bar         = document.getElementById("progress-bar")      as HTMLElement;
+  const phaseEl     = document.getElementById("progress-phase")    as HTMLElement;
+  const pctEl       = document.getElementById("progress-pct")      as HTMLElement;
+  const errorToast  = document.getElementById("error-toast")       as HTMLElement;
+
+  // ── State ───────────────────────────────────────────────────────────────
+  let viewer:   Viewer3D | null = null;
+  let gpxFile:  File     | null = null;
+  let hasModel  = false;
+
+  // ── UI helpers ───────────────────────────────────────────────────────────
+  function showProgress(phase: string, pct: number) {
+    overlay.classList.remove("hidden");
+    phaseEl.textContent = phase;
+    pctEl.textContent   = `${Math.round(pct)}%`;
+    bar.style.width     = `${Math.round(pct)}%`;
+  }
+
+  function hideProgress() {
+    overlay.classList.add("hidden");
+    bar.style.width = "0%";
+  }
+
+  function showError(msg: string) {
+    errorToast.textContent = msg;
+    errorToast.classList.remove("hidden");
+    setTimeout(() => errorToast.classList.add("hidden"), 6000);
+  }
+
+  function setPlaceholder(show: boolean) {
+    placeholder.classList.toggle("hidden", !show);
+  }
+
+  // ── Read all form values into the API settings shape ─────────────────────
+  function readSettings(): Record<string, unknown> {
+    const fd   = new FormData(form);
+    const bool = (k: string) => fd.has(k);
+    const num  = (k: string, d: number) => {
+      const v = fd.get(k);
+      return typeof v === "string" ? Number(v) : d;
+    };
+    return {
+      shape:               fd.get("shape")        ?? "hexagon",
+      obj_size:            num("obj_size", 100),
+      shape_rotation:      num("shape_rotation", 0),
+      num_subdivisions:    num("num_subdivisions", 4),
+      scale_elevation:     num("scale_elevation", 1),
+      path_thickness:      num("path_thickness", 1.2),
+      min_thickness:       num("min_thickness", 2),
+      fixed_elevation_scale: bool("fixed_elevation_scale"),
+      water_ponds:         bool("water_ponds"),
+      water_small_rivers:  bool("water_small_rivers"),
+      water_big_rivers:    bool("water_big_rivers"),
+      forests:             bool("forests"),
+      greenspace:          bool("greenspace"),
+      city_boundaries:     bool("city_boundaries"),
+      buildings:           bool("buildings"),
+      roads_major:         bool("roads_major"),
+      roads_medium:        bool("roads_medium"),
+      roads_minor:         bool("roads_minor"),
+      element_mode:        fd.get("element_mode")  ?? "paint",
+      single_color_mode:   bool("single_color_mode"),
+      elevation_api:       fd.get("elevation_api") ?? "mapzen",
+    };
+  }
+
+  // ── GPX file tracking ────────────────────────────────────────────────────
+  gpxInput.addEventListener("change", () => {
+    gpxFile = gpxInput.files?.[0] ?? null;
+  });
+
+  // ── Preview flow ─────────────────────────────────────────────────────────
+  btnPreview.addEventListener("click", async () => {
+    if (!gpxFile) {
+      showError("Please select a GPX file first.");
+      return;
+    }
+
+    btnPreview.disabled = true;
+    setPlaceholder(false);
+    showProgress("Submitting…", 0);
+
+    try {
+      if (!viewer) viewer = new Viewer3D(canvas);
+
+      const { job_id } = await submitPreview(gpxFile, readSettings());
+
+      const result = await pollJob(job_id, (status) => {
+        const label =
+          status.status === "pending" ? "Queued…" : "Generating terrain…";
+        showProgress(label, status.progress);
+      });
+
+      if (result.result_url) {
+        showProgress("Loading 3D model…", 98);
+        await viewer.loadGLB(result.result_url);
+        hasModel = true;
+      }
+
+      hideProgress();
+    } catch (err) {
+      hideProgress();
+      showError(err instanceof Error ? err.message : "Preview failed");
+      setPlaceholder(!hasModel);
+    } finally {
+      btnPreview.disabled = false;
+    }
+  });
+</script>

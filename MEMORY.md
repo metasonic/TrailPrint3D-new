@@ -420,6 +420,6 @@ showPlaceholder(show: boolean): void
 - [x] Phase 3: Backend Core
 - [x] Phase 4: Blender Script
 - [x] Phase 5: Frontend Shell
-- [ ] Phase 6: Preview Integration
+- [x] Phase 6: Preview Integration
 - [ ] Phase 7: Export Integration
 - [ ] Phase 8: Docker Packaging

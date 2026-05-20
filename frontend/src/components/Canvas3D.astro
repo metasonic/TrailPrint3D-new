@@ -1,7 +1,6 @@
 ---
 // Canvas3D — Three.js render target and job status overlay.
-// Phase 5: static placeholder UI.
-// Phase 6: wires upload → API → GLB loading → orbit controls.
+// All interactivity is driven by index.astro's <script> block.
 ---
 
 <div id="canvas-container" class="relative flex-1 flex flex-col min-h-0 bg-(--color-surface-base)">
@@ -57,38 +56,3 @@
 
 </div>
 
-<script>
-  // Expose progress/error helpers for Phase 6 to call
-  export {};  // treat as module
-
-  (window as unknown as Record<string, unknown>).__tp3d = {
-    showProgress(phase: string, pct: number) {
-      const overlay = document.getElementById("progress-overlay");
-      const bar     = document.getElementById("progress-bar");
-      const phaseEl = document.getElementById("progress-phase");
-      const pctEl   = document.getElementById("progress-pct");
-      if (!overlay || !bar || !phaseEl || !pctEl) return;
-      overlay.classList.remove("hidden");
-      phaseEl.textContent = phase;
-      pctEl.textContent   = `${pct}%`;
-      bar.style.width     = `${pct}%`;
-    },
-
-    hideProgress() {
-      document.getElementById("progress-overlay")?.classList.add("hidden");
-    },
-
-    showError(msg: string) {
-      const el = document.getElementById("error-toast");
-      if (!el) return;
-      el.textContent = msg;
-      el.classList.remove("hidden");
-      setTimeout(() => el.classList.add("hidden"), 6000);
-    },
-
-    showPlaceholder(show: boolean) {
-      const el = document.getElementById("canvas-placeholder");
-      el?.classList.toggle("hidden", !show);
-    },
-  };
-</script>
