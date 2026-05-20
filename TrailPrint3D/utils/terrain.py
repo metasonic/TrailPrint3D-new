@@ -466,11 +466,12 @@ def coloring_main(map, kind = "WATER"):
             bpy.data.objects.remove(merged_object, do_unlink=True)
             bpy.data.meshes.remove(mesh_data)
 
-    for area in bpy.context.screen.areas:
-        if area.type == 'VIEW_3D':  # make sure it's a 3D Viewport
-            for space in area.spaces:
-                if space.type == 'VIEW_3D':
-                    space.shading.type = 'MATERIAL'  # switch shading
+    if bpy.context.screen:
+        for area in bpy.context.screen.areas:
+            if area.type == 'VIEW_3D':  # make sure it's a 3D Viewport
+                for space in area.spaces:
+                    if space.type == 'VIEW_3D':
+                        space.shading.type = 'MATERIAL'  # switch shading
 
 
     bpy.context.preferences.edit.use_global_undo = True

@@ -24,6 +24,9 @@ def zoom_camera_to_selected(obj):
     except ReferenceError:
         return
 
+    if not bpy.context.screen:
+        return
+
     bpy.ops.object.select_all(action='DESELECT')
 
     obj.select_set(True)  # Select the object

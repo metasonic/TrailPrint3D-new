@@ -319,9 +319,47 @@ Logged in ERRORS.md.
 - **Flagged By**: Integration Lead
 - **Confidence**: High
 
-## Decisions
+---
 
-<!-- Entries will be added here as decisions are made. -->
+## Phase 4 — Blender Script (2026-05-20)
+
+### Files created / modified
+
+| File | Change |
+|------|--------|
+| `scripts/generate_terrain.py` | New — headless Blender pipeline script |
+| `scripts/test_blender.sh` | New — smoke-test helper (requires Blender installed) |
+| `TrailPrint3D/utils/generation.py` | Guard: `if bpy.context.screen:` around viewport shading loop (line ~1204) |
+| `TrailPrint3D/utils/terrain.py` | Guard: `if bpy.context.screen:` around viewport shading loop (line ~469) |
+| `TrailPrint3D/utils/scene.py` | Guard: `if not bpy.context.screen: return` in `zoom_camera_to_selected` |
+
+### Headless bootstrap sequence in `generate_terrain.py`
+
+1. Parse `--gpx`, `--settings`, `--output`, `--mode`, `--format` from argv after `--`
+2. Create `job_dir/.cache/{terrarium,overpass}` directories
+3. Stub `sys.modules["TrailPrint3D.progress"]` with `_StubProgress`/`_StubWarnings` before any import
+4. Add repo root to `sys.path`; stub `map_picker` module
+5. `import TrailPrint3D` (runs `__init__.py`; progress stub is already in sys.modules)
+6. Patch `TrailPrint3D.constants` cache dirs to point to `job_dir/.cache/`
+7. Patch `_scene.show_message_box` and `_scene.zoom_camera_to_selected` (and mirror patches on `_utils` namespace)
+8. Patch `addon_preferences.get_prefs` to return `_FakePrefs(openTopographyApiKey="", default_export_folder=job_dir/)`
+9. Register `TP3D_AddonPreferences` + `TP3D_PG_properties`; bind `bpy.types.Scene.tp3d`
+10. Load settings JSON → map snake_case → camelCase Blender props
+11. Set `tp3d.file_path = gpx`, `tp3d.export_path = job_dir`, `tp3d.disable_auto_export = True`
+12. `from TrailPrint3D.utils.generation import runGeneration; runGeneration(0)`
+13. Collect generated mesh/curve/font objects, select all, export via `bpy.ops.*`
+
+### Format → export op mapping
+
+| format | operator |
+|--------|----------|
+| `glb`  | `bpy.ops.export_scene.gltf(format="GLB", export_selected=True, export_apply=True)` |
+| `stl`  | `bpy.ops.wm.stl_export(export_selected_objects=True)` |
+| `obj`  | `bpy.ops.wm.obj_export(export_selected_objects=True, export_triangulated_mesh=True)` |
+| `3mf`  | `bpy.ops.export_scene.three_mf_export()` with STL fallback if not installed |
+
+### Progress scale
+Script emits: 5 (init) → 10 (start gen) → 5–95 (passthrough from ProgressOverlay.update) → 90 (pre-export) → 100 (done)
 
 ---
 
@@ -330,7 +368,7 @@ Logged in ERRORS.md.
 - [x] Phase 1: Repository Analysis
 - [x] Phase 2: API Contract
 - [x] Phase 3: Backend Core
-- [ ] Phase 4: Blender Script
+- [x] Phase 4: Blender Script
 - [ ] Phase 5: Frontend Shell
 - [ ] Phase 6: Preview Integration
 - [ ] Phase 7: Export Integration
