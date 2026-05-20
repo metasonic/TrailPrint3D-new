@@ -1,0 +1,28 @@
+.git
+.github
+.claude
+
+# Frontend build artifacts (rebuilt inside the frontend Dockerfile)
+frontend/node_modules
+frontend/dist
+frontend/.astro
+
+# Python caches
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+
+# Dev-only backend files
+backend/tests
+
+# Docs and repo metadata
+docs
+*.md
+LICENSE
+SECURITY.md
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+AGENTS.md
+taginfo.json
+build.ps1
