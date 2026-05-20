@@ -1,0 +1,94 @@
+---
+// Canvas3D — Three.js render target and job status overlay.
+// Phase 5: static placeholder UI.
+// Phase 6: wires upload → API → GLB loading → orbit controls.
+---
+
+<div id="canvas-container" class="relative flex-1 flex flex-col min-h-0 bg-(--color-surface-base)">
+
+  <!-- Three.js mounts here -->
+  <canvas id="canvas-3d" class="absolute inset-0 w-full h-full"></canvas>
+
+  <!-- Placeholder (visible until a model loads; hidden by Phase 6 JS) -->
+  <div
+    id="canvas-placeholder"
+    class="absolute inset-0 flex flex-col items-center justify-center gap-4
+           pointer-events-none select-none"
+  >
+    <svg class="w-20 h-20 opacity-10" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1">
+      <!-- Mountain silhouette -->
+      <polygon points="32,8 6,52 58,52" stroke-linejoin="round"/>
+      <polygon points="46,22 26,52 62,52" fill="currentColor" opacity="0.5" stroke="none"/>
+      <!-- Trail line -->
+      <path d="M18 44 Q24 36 32 38 Q40 40 46 32" stroke-width="2" stroke-dasharray="3 2"/>
+    </svg>
+    <p class="text-(--color-text-muted) text-sm font-medium">Upload a GPX file to begin</p>
+    <p class="text-(--color-text-muted) text-xs">3D preview will appear here</p>
+  </div>
+
+  <!-- Progress overlay (hidden until a job is active) -->
+  <div
+    id="progress-overlay"
+    class="absolute inset-x-0 bottom-0 hidden px-4 py-3
+           bg-(--color-surface-panel)/90 backdrop-blur-sm
+           border-t border-(--color-border-subtle)"
+  >
+    <div class="flex items-center justify-between mb-1.5">
+      <span id="progress-phase" class="text-xs text-(--color-text-secondary)">Processing…</span>
+      <span id="progress-pct" class="text-xs font-mono text-(--color-trail-orange)">0%</span>
+    </div>
+    <div class="h-1 rounded-full bg-(--color-border-subtle) overflow-hidden">
+      <div
+        id="progress-bar"
+        class="h-full rounded-full bg-(--color-trail-orange) transition-all duration-300"
+        style="width: 0%"
+      ></div>
+    </div>
+  </div>
+
+  <!-- Error toast (hidden until an error occurs) -->
+  <div
+    id="error-toast"
+    class="absolute top-4 left-1/2 -translate-x-1/2 hidden
+           px-4 py-2 rounded-(--radius-panel)
+           bg-red-950 border border-red-800
+           text-red-300 text-sm max-w-sm text-center"
+  ></div>
+
+</div>
+
+<script>
+  // Expose progress/error helpers for Phase 6 to call
+  export {};  // treat as module
+
+  (window as unknown as Record<string, unknown>).__tp3d = {
+    showProgress(phase: string, pct: number) {
+      const overlay = document.getElementById("progress-overlay");
+      const bar     = document.getElementById("progress-bar");
+      const phaseEl = document.getElementById("progress-phase");
+      const pctEl   = document.getElementById("progress-pct");
+      if (!overlay || !bar || !phaseEl || !pctEl) return;
+      overlay.classList.remove("hidden");
+      phaseEl.textContent = phase;
+      pctEl.textContent   = `${pct}%`;
+      bar.style.width     = `${pct}%`;
+    },
+
+    hideProgress() {
+      document.getElementById("progress-overlay")?.classList.add("hidden");
+    },
+
+    showError(msg: string) {
+      const el = document.getElementById("error-toast");
+      if (!el) return;
+      el.textContent = msg;
+      el.classList.remove("hidden");
+      setTimeout(() => el.classList.add("hidden"), 6000);
+    },
+
+    showPlaceholder(show: boolean) {
+      const el = document.getElementById("canvas-placeholder");
+      el?.classList.toggle("hidden", !show);
+    },
+  };
+</script>

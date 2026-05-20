@@ -1,0 +1,19 @@
+---
+import Layout from "../layouts/Layout.astro";
+import SettingsPanel from "../components/SettingsPanel.astro";
+import Canvas3D from "../components/Canvas3D.astro";
+---
+
+<Layout title="TrailPrint3D — GPX to 3D Print">
+  <div class="flex h-screen overflow-hidden">
+
+    <!-- Settings sidebar (fixed width) -->
+    <div class="w-80 shrink-0 h-full overflow-hidden flex flex-col">
+      <SettingsPanel />
+    </div>
+
+    <!-- 3D canvas (fills remaining space) -->
+    <Canvas3D />
+
+  </div>
+</Layout>

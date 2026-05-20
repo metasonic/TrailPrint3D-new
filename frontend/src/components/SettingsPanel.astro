@@ -1,0 +1,489 @@
+---
+// SettingsPanel — all generation settings as a vertical form.
+// Form submit is wired by Canvas3D.astro's <script> in Phase 6.
+---
+
+<aside
+  id="settings-panel"
+  class="flex flex-col h-full overflow-y-auto bg-(--color-surface-panel)
+         border-r border-(--color-border-subtle)"
+>
+  <!-- Header -->
+  <div class="px-4 py-4 border-b border-(--color-border-subtle) shrink-0">
+    <div class="flex items-center gap-2">
+      <svg class="w-6 h-6 text-(--color-trail-orange)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M3 17l4-8 4 4 3-6 4 9"/>
+        <path d="M3 21h18"/>
+      </svg>
+      <span class="font-semibold text-sm tracking-wide text-(--color-text-primary)">TrailPrint3D</span>
+    </div>
+    <p class="mt-1 text-xs text-(--color-text-muted)">GPX → 3D-printable terrain</p>
+  </div>
+
+  <form id="generation-form" class="flex flex-col gap-1 p-3 flex-1" novalidate>
+
+    <!-- ── GPX Upload ─────────────────────────────────────── -->
+    <section class="settings-section">
+      <label class="section-label">GPX File</label>
+      <label
+        id="gpx-drop-zone"
+        class="flex flex-col items-center justify-center gap-2 px-4 py-5
+               rounded-(--radius-input) border-2 border-dashed
+               border-(--color-border-default) cursor-pointer
+               hover:border-(--color-trail-orange) transition-colors
+               text-(--color-text-muted) text-sm"
+      >
+        <svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/>
+          <path d="M12 12V4m0 0L8 8m4-4l4 4"/>
+        </svg>
+        <span id="gpx-label">Drop .gpx file or click to browse</span>
+        <input
+          id="gpx-file"
+          name="gpx_file"
+          type="file"
+          accept=".gpx"
+          class="sr-only"
+        />
+      </label>
+    </section>
+
+    <!-- ── Shape & Size ───────────────────────────────────── -->
+    <details class="settings-section" open>
+      <summary class="section-label cursor-pointer select-none">Shape &amp; Size</summary>
+      <div class="section-body">
+
+        <div class="field-row">
+          <label class="field-label" for="shape">Shape</label>
+          <select id="shape" name="shape" class="field-select">
+            <option value="hexagon">Hexagon</option>
+            <option value="square">Rectangle</option>
+            <option value="circle">Circle</option>
+          </select>
+        </div>
+
+        <div class="field-row">
+          <label class="field-label" for="obj_size">
+            Size <span class="field-unit">mm</span>
+          </label>
+          <input
+            id="obj_size" name="obj_size" type="number"
+            min="5" max="500" value="100"
+            class="field-input w-24"
+          />
+        </div>
+
+        <div class="field-row">
+          <label class="field-label" for="shape_rotation">
+            Rotation <span class="field-unit">°</span>
+          </label>
+          <input
+            id="shape_rotation" name="shape_rotation" type="number"
+            min="-360" max="360" value="0" step="5"
+            class="field-input w-24"
+          />
+        </div>
+
+      </div>
+    </details>
+
+    <!-- ── Terrain ────────────────────────────────────────── -->
+    <details class="settings-section" open>
+      <summary class="section-label cursor-pointer select-none">Terrain</summary>
+      <div class="section-body">
+
+        <div class="field-row">
+          <label class="field-label" for="num_subdivisions">
+            Resolution
+            <span class="field-hint">(higher = slower)</span>
+          </label>
+          <div class="flex items-center gap-2">
+            <input
+              id="num_subdivisions" name="num_subdivisions"
+              type="range" min="1" max="8" value="4"
+              class="w-28"
+            />
+            <output for="num_subdivisions" id="num_subdivisions_out"
+              class="w-5 text-right text-xs text-(--color-text-secondary)">4</output>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <label class="field-label" for="scale_elevation">
+            Elevation Scale
+          </label>
+          <div class="flex items-center gap-2">
+            <input
+              id="scale_elevation" name="scale_elevation"
+              type="range" min="0.1" max="5" step="0.1" value="1"
+              class="w-28"
+            />
+            <output for="scale_elevation" id="scale_elevation_out"
+              class="w-8 text-right text-xs text-(--color-text-secondary)">1.0×</output>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <label class="field-label" for="path_thickness">
+            Trail Width <span class="field-unit">mm</span>
+          </label>
+          <div class="flex items-center gap-2">
+            <input
+              id="path_thickness" name="path_thickness"
+              type="range" min="0.1" max="5" step="0.1" value="1.2"
+              class="w-28"
+            />
+            <output for="path_thickness" id="path_thickness_out"
+              class="w-8 text-right text-xs text-(--color-text-secondary)">1.2</output>
+          </div>
+        </div>
+
+        <div class="field-row">
+          <label class="field-label" for="min_thickness">
+            Base Thickness <span class="field-unit">mm</span>
+          </label>
+          <input
+            id="min_thickness" name="min_thickness" type="number"
+            min="0.5" max="20" step="0.5" value="2"
+            class="field-input w-20"
+          />
+        </div>
+
+        <div class="field-row">
+          <label class="field-label" for="fixed_elevation_scale">Fixed 10 mm height</label>
+          <input id="fixed_elevation_scale" name="fixed_elevation_scale" type="checkbox" />
+        </div>
+
+      </div>
+    </details>
+
+    <!-- ── Elements (OSM) ────────────────────────────────── -->
+    <details class="settings-section">
+      <summary class="section-label cursor-pointer select-none">
+        Elements
+        <span class="section-hint">disabled in preview</span>
+      </summary>
+      <div class="section-body">
+
+        <p class="text-xs text-(--color-text-muted) mb-2">
+          Elements are fetched from OpenStreetMap and only applied during export.
+        </p>
+
+        <fieldset class="element-group">
+          <legend class="element-legend">Water</legend>
+          <label class="check-row">
+            <input type="checkbox" name="water_ponds" />
+            <span>Ponds &amp; Lakes</span>
+          </label>
+          <label class="check-row">
+            <input type="checkbox" name="water_small_rivers" />
+            <span>Small Rivers</span>
+          </label>
+          <label class="check-row">
+            <input type="checkbox" name="water_big_rivers" />
+            <span>Major Rivers</span>
+          </label>
+        </fieldset>
+
+        <fieldset class="element-group">
+          <legend class="element-legend">Vegetation</legend>
+          <label class="check-row">
+            <input type="checkbox" name="forests" />
+            <span>Forests</span>
+          </label>
+          <label class="check-row">
+            <input type="checkbox" name="greenspace" />
+            <span>Greenspace</span>
+          </label>
+        </fieldset>
+
+        <fieldset class="element-group">
+          <legend class="element-legend">Urban</legend>
+          <label class="check-row">
+            <input type="checkbox" name="city_boundaries" />
+            <span>City Boundaries</span>
+          </label>
+          <label class="check-row">
+            <input type="checkbox" name="buildings" />
+            <span>Buildings</span>
+          </label>
+        </fieldset>
+
+        <fieldset class="element-group">
+          <legend class="element-legend">Roads</legend>
+          <label class="check-row">
+            <input type="checkbox" name="roads_major" />
+            <span>Major Roads</span>
+          </label>
+          <label class="check-row">
+            <input type="checkbox" name="roads_medium" />
+            <span>Secondary Roads</span>
+          </label>
+          <label class="check-row">
+            <input type="checkbox" name="roads_minor" />
+            <span>Local Roads</span>
+          </label>
+        </fieldset>
+
+        <div class="field-row mt-2">
+          <label class="field-label" for="element_mode">Element Mode</label>
+          <select id="element_mode" name="element_mode" class="field-select">
+            <option value="paint">Paint on map</option>
+            <option value="single_color">Single-color</option>
+            <option value="separate">Separate objects</option>
+          </select>
+        </div>
+
+      </div>
+    </details>
+
+    <!-- ── Print Mode ─────────────────────────────────────── -->
+    <details class="settings-section">
+      <summary class="section-label cursor-pointer select-none">Print Mode</summary>
+      <div class="section-body">
+
+        <label class="check-row">
+          <input type="checkbox" name="single_color_mode" id="single_color_mode" />
+          <span>
+            Single-color mode
+            <span class="field-hint">for single-extruder printers</span>
+          </span>
+        </label>
+
+      </div>
+    </details>
+
+    <!-- ── Elevation API ──────────────────────────────────── -->
+    <details class="settings-section">
+      <summary class="section-label cursor-pointer select-none">Elevation Source</summary>
+      <div class="section-body">
+
+        <div class="flex flex-col gap-1.5">
+          <label class="check-row">
+            <input type="radio" name="elevation_api" value="mapzen" checked />
+            <span>Terrain Tiles <span class="field-hint">(fast, global)</span></span>
+          </label>
+          <label class="check-row">
+            <input type="radio" name="elevation_api" value="opentopodata" />
+            <span>OpenTopoData <span class="field-hint">(accurate, slower)</span></span>
+          </label>
+          <label class="check-row">
+            <input type="radio" name="elevation_api" value="open-elevation" />
+            <span>Open-Elevation</span>
+          </label>
+          <label class="check-row">
+            <input type="radio" name="elevation_api" value="opentopography" />
+            <span>OpenTopography <span class="field-hint">(API key required)</span></span>
+          </label>
+        </div>
+
+      </div>
+    </details>
+
+    <!-- ── Actions ────────────────────────────────────────── -->
+    <div class="mt-auto pt-3 flex flex-col gap-2 shrink-0 border-t border-(--color-border-subtle)">
+
+      <button
+        id="btn-preview"
+        type="button"
+        class="w-full py-2.5 px-4 rounded-(--radius-btn) font-semibold text-sm
+               bg-(--color-trail-orange) text-white
+               hover:bg-(--color-trail-orange-hover) active:scale-[0.98]
+               transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        Generate Preview
+      </button>
+
+      <div class="flex gap-2">
+        <select
+          id="export-format"
+          name="export_format"
+          class="flex-1 field-select text-sm"
+          aria-label="Export format"
+        >
+          <option value="stl">STL</option>
+          <option value="obj">OBJ</option>
+          <option value="3mf">3MF</option>
+        </select>
+        <button
+          id="btn-export"
+          type="button"
+          class="flex-1 py-2.5 px-4 rounded-(--radius-btn) font-semibold text-sm
+                 bg-(--color-surface-raised) text-(--color-text-primary)
+                 border border-(--color-border-default)
+                 hover:border-(--color-trail-orange) hover:text-(--color-trail-orange)
+                 active:scale-[0.98] transition-all
+                 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Export
+        </button>
+      </div>
+
+    </div>
+
+  </form>
+</aside>
+
+<style>
+  /* Scoped utility classes for the settings panel */
+  .settings-section {
+    border-radius: var(--radius-panel);
+    overflow: hidden;
+  }
+
+  .section-label {
+    display: block;
+    padding: 0.5rem 0.25rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+  }
+
+  details.settings-section > summary.section-label {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    padding: 0.5rem 0.25rem;
+  }
+
+  details.settings-section > summary.section-label::after {
+    content: "▸";
+    margin-left: auto;
+    font-size: 0.6rem;
+    transition: transform 0.15s;
+    color: var(--color-text-muted);
+  }
+
+  details.settings-section[open] > summary.section-label::after {
+    transform: rotate(90deg);
+  }
+
+  .section-hint {
+    font-size: 0.65rem;
+    font-weight: 400;
+    letter-spacing: normal;
+    text-transform: none;
+    color: var(--color-text-muted);
+  }
+
+  .section-body {
+    padding: 0 0.25rem 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .field-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    min-height: 1.75rem;
+  }
+
+  .field-label {
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
+    flex-shrink: 0;
+  }
+
+  .field-hint {
+    font-size: 0.7rem;
+    color: var(--color-text-muted);
+  }
+
+  .field-unit {
+    font-size: 0.7rem;
+    color: var(--color-text-muted);
+  }
+
+  .field-input {
+    background: var(--color-surface-input);
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-input);
+    color: var(--color-text-primary);
+    font-size: 0.8rem;
+    padding: 0.25rem 0.5rem;
+    text-align: right;
+  }
+
+  .field-input:focus {
+    outline: none;
+    border-color: var(--color-trail-orange);
+  }
+
+  .field-select {
+    background: var(--color-surface-input);
+    border: 1px solid var(--color-border-default);
+    border-radius: var(--radius-input);
+    color: var(--color-text-primary);
+    font-size: 0.8rem;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    width: 100%;
+  }
+
+  .field-select:focus {
+    outline: none;
+    border-color: var(--color-trail-orange);
+  }
+
+  .element-group {
+    border: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .element-legend {
+    font-size: 0.7rem;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 0.25rem;
+  }
+
+  .check-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    padding: 0.125rem 0;
+  }
+
+  .check-row:hover {
+    color: var(--color-text-primary);
+  }
+</style>
+
+<script>
+  // Live range → output label updates (no framework needed)
+  type RangeSpec = [string, string, (v: string) => string];
+  const ranges: RangeSpec[] = [
+    ["num_subdivisions",  "num_subdivisions_out",  (v) => v],
+    ["scale_elevation",   "scale_elevation_out",   (v) => parseFloat(v).toFixed(1) + "×"],
+    ["path_thickness",    "path_thickness_out",    (v) => parseFloat(v).toFixed(1)],
+  ];
+
+  for (const [inputId, outputId, fmt] of ranges) {
+    const input = document.getElementById(inputId) as HTMLInputElement | null;
+    const output = document.getElementById(outputId) as HTMLOutputElement | null;
+    if (!input || !output) continue;
+    const update = () => { output.value = fmt(input.value); };
+    input.addEventListener("input", update);
+    update();
+  }
+
+  // GPX file label update
+  const gpxInput = document.getElementById("gpx-file") as HTMLInputElement | null;
+  const gpxLabel = document.getElementById("gpx-label");
+  gpxInput?.addEventListener("change", () => {
+    const file = gpxInput.files?.[0];
+    if (gpxLabel) gpxLabel.textContent = file ? file.name : "Drop .gpx file or click to browse";
+  });
+</script>

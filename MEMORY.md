@@ -363,13 +363,63 @@ Script emits: 5 (init) → 10 (start gen) → 5–95 (passthrough from ProgressO
 
 ---
 
+## Phase 5 — Frontend Shell (2026-05-20)
+
+**Build result**: 1 page built, 0 TypeScript errors.
+
+### Stack
+- Astro 6.3.5 (static output)
+- Tailwind CSS v4.3 via `@tailwindcss/vite` (no tailwind.config.js — tokens in `@theme` block)
+- Three.js 0.184.0 (type stubs installed; wired in Phase 6)
+- Dev proxy: `/api` and `/files` → `http://localhost:8000`
+
+### Files created
+
+| File | Purpose |
+|------|---------|
+| `frontend/package.json` | Astro + Tailwind v4 + Three.js dependencies |
+| `frontend/astro.config.mjs` | `@tailwindcss/vite` plugin, dev proxy |
+| `frontend/tsconfig.json` | Extends `astro/tsconfigs/strict` |
+| `frontend/src/env.d.ts` | Astro type reference |
+| `frontend/src/styles/global.css` | `@import "tailwindcss"` + `@theme` design tokens |
+| `frontend/src/layouts/Layout.astro` | HTML shell, imports global CSS |
+| `frontend/src/pages/index.astro` | 2-column layout: 320px panel + fill canvas |
+| `frontend/src/components/SettingsPanel.astro` | Full settings form (all 25 API fields + export) |
+| `frontend/src/components/Canvas3D.astro` | `<canvas id="canvas-3d">` + placeholder overlay + progress/error UI |
+| `frontend/public/favicon.svg` | Trail-themed SVG favicon |
+
+### Design tokens (`@theme`)
+- `--color-trail-orange: #f97316` — primary accent / CTA buttons
+- `--color-surface-base: #0a0f1a` — page background (deep navy)
+- `--color-surface-panel: #111827` — settings sidebar background
+- `--color-surface-raised: #1f2937` — card / secondary button
+- `--color-surface-input: #1a2232` — form inputs
+
+### `window.__tp3d` API (exposed by Canvas3D.astro, consumed in Phase 6)
+```typescript
+showProgress(phase: string, pct: number): void
+hideProgress(): void
+showError(msg: string): void        // auto-dismisses after 6s
+showPlaceholder(show: boolean): void
+```
+
+### Decision — Tailwind v4 vs v3 (2026-05-20)
+- **Decided**: Use Tailwind v4 with the `@tailwindcss/vite` plugin; design tokens in `@theme` block in global.css.
+- **Why**: v4 is current (released alongside Astro 6); avoids deprecated `@astrojs/tailwind` path; no separate config file needed.
+- **Rejected**: Tailwind v3 + `@astrojs/tailwind`.
+- **Rejected Why**: v3 is legacy; `@astrojs/tailwind` v6 still bundles v3 internally and would pin us to an older API.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+---
+
 ## Phase Completion Tracker
 
 - [x] Phase 1: Repository Analysis
 - [x] Phase 2: API Contract
 - [x] Phase 3: Backend Core
 - [x] Phase 4: Blender Script
-- [ ] Phase 5: Frontend Shell
+- [x] Phase 5: Frontend Shell
 - [ ] Phase 6: Preview Integration
 - [ ] Phase 7: Export Integration
 - [ ] Phase 8: Docker Packaging
