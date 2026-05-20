@@ -11,14 +11,15 @@
  * Export integration (POST /api/v1/export + browser download) is Phase 7.
  */
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AppStateProvider, useAppState } from "@/state/AppState";
 import { UploadForm } from "@/components/UploadForm";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { PreviewCanvas } from "@/components/PreviewCanvas";
 import { DownloadPanel } from "@/components/DownloadPanel";
 import { JobStatusBadge } from "@/components/JobStatusBadge";
-import { postPreview, pollJob } from "@/api/client";
+import { pollJob, postExport, postPreview } from "@/api/client";
+import type { ExportFormat } from "@/types/settings";
 
 export function AppShell() {
   return (
@@ -95,11 +96,57 @@ function Layout() {
     void generatePreview(gpx);
   }, [gpx, generatePreview]);
 
-  const handleExport = useCallback((_fmt: string) => {
-    // Phase 7 wires POST /api/v1/export here.
-  }, []);
+  const [exporting, setExporting] = useState(false);
 
-  const busy = jobStatus === "pending" || jobStatus === "processing";
+  const runExport = useCallback(
+    async (fmt: ExportFormat) => {
+      if (!gpx) return;
+      pollAbortRef.current?.abort();
+      const controller = new AbortController();
+      pollAbortRef.current = controller;
+
+      setExporting(true);
+      setJobStatus("pending");
+      setJobError(null);
+
+      try {
+        const jobId = await postExport(gpx, settings, fmt);
+        if (controller.signal.aborted) return;
+        const info = await pollJob(jobId, {
+          intervalMs: 1000,
+          signal: controller.signal,
+          onUpdate: (i) => {
+            if (!controller.signal.aborted) setJobStatus(i.status);
+          },
+        });
+        if (controller.signal.aborted) return;
+        if (info.status === "completed" && info.result_url) {
+          setJobStatus("completed");
+          triggerBrowserDownload(info.result_url, suggestedFilename(gpx.name, fmt));
+        } else {
+          setJobStatus("failed");
+          setJobError(info.error ?? "unknown error");
+        }
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setJobStatus("failed");
+        setJobError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setExporting(false);
+      }
+    },
+    [gpx, settings, setJobStatus, setJobError],
+  );
+
+  const handleExport = useCallback(
+    (fmt: ExportFormat) => {
+      void runExport(fmt);
+    },
+    [runExport],
+  );
+
+  const busy = exporting || jobStatus === "pending" || jobStatus === "processing";
 
   return (
     <div className="mx-auto flex min-h-screen max-w-[1400px] flex-col gap-6 p-6">
@@ -124,4 +171,21 @@ function Layout() {
       </div>
     </div>
   );
+}
+
+/** Build a sensible download filename: <gpx-stem>.<format>. */
+function suggestedFilename(gpxName: string, fmt: ExportFormat): string {
+  const stem = gpxName.replace(/\.[gG][pP][xX]$/, "");
+  return `${stem}.${fmt}`;
+}
+
+/** Trigger a same-origin file download with a chosen filename. */
+function triggerBrowserDownload(url: string, filename: string): void {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }

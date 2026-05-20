@@ -336,3 +336,32 @@ that surface during Phase 4.
 - **Rejected**: n/a
 - **Flagged By**: Integration Lead
 - **Confidence**: High.
+
+### Phase 7 - Export integration wired and live-verified
+
+- **Decided**: Export uses the same enqueue → poll → terminal-status pattern as preview, but on `completed` triggers a browser download instead of setting the preview URL. Download is implemented with a synthetic `<a download href=resultUrl>` click that the browser sees as a normal same-origin download (no fetch + blob URL needed because `/files/...` is same-origin and serves the right Content-Type).
+- **Why**: Same shape as preview, so the surrounding state machine (in-flight abort, status badge, error surface) is reused. The anchor-click idiom is the simplest correct browser primitive.
+- **Rejected**: `window.open(result_url)`; `fetch + Blob + URL.createObjectURL`.
+- **Rejected Why**: `window.open` may open in a new tab/popup-blocker. The fetch+blob path re-downloads the file into memory just to inject an artificial URL — pointless for a same-origin file.
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
+
+- **Decided**: Download filename is `${gpx-stem}.${format}` (e.g. `Cluj_Eco_Trail.stl`). The `<a download>` attribute hints the filename; the server's Content-Disposition is not set today (browsers honour the attribute for same-origin downloads).
+- **Why**: Predictable and matches what a desktop slicer user expects.
+- **Rejected**: Using the backend's `{job_id}.{format}` filename verbatim.
+- **Rejected Why**: A UUID is opaque; the GPX stem is meaningful.
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
+
+- **Decided**: A separate `exporting` boolean in `AppShell` tracks in-flight export jobs distinctly from preview jobs, so the Settings panel can stay disabled during export even though `jobStatus` is shared. The Regenerate/Export buttons are both gated by a combined `busy` flag.
+- **Why**: Keeps the user from double-clicking Export or hitting Regenerate while an export is mid-flight (both would abort the in-flight poll and confuse the status badge).
+- **Rejected**: Two parallel jobStatus fields (one preview, one export); allowing concurrent jobs.
+- **Rejected Why**: One in-flight job at a time is the simplest correct model; the brief gives no concurrency requirement for the UI.
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
+
+- **Decided**: Live verification recorded — full stack via `scripts/dev-up.sh`; Playwright drove the browser through upload → preview-Ready → click Export → 6 polls → real browser download event captured with file `Cluj_Eco_Trail.stl` (21,427,184 bytes — byte-identical to the Phase 4 CLI export). Test suite: 15/15 vitest, astro check 0/0/0 across 18 files.
+- **Why**: Phase 7 acceptance criteria are met.
+- **Rejected**: n/a
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
