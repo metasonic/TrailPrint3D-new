@@ -257,3 +257,46 @@ that surface during Phase 4.
 - **Rejected**: n/a
 - **Flagged By**: Integration Lead
 - **Confidence**: High.
+
+### Phase 5 - Frontend shell delivered (Astro 6 + React islands + Tailwind v4 + three.js)
+
+- **Decided**: Frontend is a standalone Astro 6 project at `frontend/` (separate from the Python Poetry project at the repo root). Astro 6.3.6, @astrojs/node 10.1.1 in standalone mode, @astrojs/react 5.0.5, Tailwind v4 via @tailwindcss/vite, three.js 0.184, Vitest 4.1.7 + jsdom 29 for component tests, React 19.1. SSR is enabled (`output: "server"`) so the Node adapter hosts the app; the brief's `HOST=0.0.0.0` is set in both astro.config and the production start command.
+- **Why**: Brief mandates Astro 6 + Node adapter standalone + Tailwind + Vitest + three.js. Latest stable across the board; Tailwind v4 is the version that ships the `@theme` directive used for design tokens.
+- **Rejected**: Putting Astro inside the Python project; using Tailwind v3 (no `@theme`); @react-three/fiber wrapper.
+- **Rejected Why**: Two languages, two package managers — cleaner to keep them separate. Tailwind v3 would force a postcss config and lose the `@theme` token block. r3f is an extra abstraction layer the brief did not ask for, and the canvas needs are simple enough that raw three.js fits in one file.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+- **Decided**: State management is a single React Context (`AppState`) holding the uploaded GPX file, the current `GenerateSettings`, the active preview URL, the job status/error, and the export format. No Redux, no Zustand, no URL-state-sync. The same `GenerateSettings` type lives in `frontend/src/types/settings.ts`, hand-mirrored from `backend/app/models.py` (single point of drift; will be regenerated from OpenAPI if/when it becomes a problem).
+- **Why**: Brief says "React hooks and context are sufficient". Hand-mirroring a 9-field interface is cheaper than wiring up an OpenAPI generator at this stage (Rule 2).
+- **Rejected**: Zustand/Redux; OpenAPI codegen for types.
+- **Rejected Why**: Premature; the schema rarely changes once locked.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+- **Decided**: Five components, one for each brief concern: `UploadForm` (drag-drop + file picker, .gpx filter), `SettingsPanel` (radio for shape, three sliders, one numeric field per Phase 5 UX questions), `PreviewCanvas` (three.js WebGL renderer + OrbitControls + GLTFLoader; reloads on URL change; disposes geometries on unmount), `DownloadPanel` (format picker + export button), `JobStatusBadge`. `AppShell.tsx` composes them under `AppStateProvider`. The Astro page (`pages/index.astro`) is a single `client:load` island hosting the shell.
+- **Why**: Splitting along brief concerns; `client:load` because everything is interactive on load (no progressive-hydration win available for a single-page app this size).
+- **Rejected**: Per-component islands (one for upload, one for canvas, etc.) with `client:visible` hydration.
+- **Rejected Why**: Components share state via Context. Splitting them across islands would require duplicating Context per island or lifting state into Astro, both worse than one `client:load` block.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+- **Decided**: Tailwind v4 `@theme` block in `src/styles/global.css` defines the colour palette (canvas/surface/edge/ink/accent/success/warning/danger), font families, and corner radii. These are the in-code design tokens promised in Q2 (no Figma).
+- **Why**: Tokens centralised, all components reference `var(--color-…)` so a future palette swap is one-file. Tailwind v4's `@theme` makes the token block first-class.
+- **Rejected**: A `tailwind.config.ts` with extended theme (v3 style); per-component colour literals.
+- **Rejected Why**: v3 style doesn't apply to Tailwind v4. Colour literals defeat the design-token decision.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+- **Decided**: Phase 5 wires the components together with **stub callbacks**, not real `fetch()` calls. `UploadForm.onUpload`, `SettingsPanel.onRegenerate`, `DownloadPanel.onExport` are all no-ops in `AppShell`. Phase 6 replaces them with `POST /api/v1/preview` + status polling at ~1 s intervals; Phase 7 adds the export flow.
+- **Why**: Brief defines Phase 5 as the "frontend shell"; the integrations are Phase 6 and 7. Stubs let me ship Phase 5 cleanly without lifting backend coupling into the wrong phase.
+- **Rejected**: Doing the API calls now.
+- **Rejected Why**: Violates the "proceed strictly in this order" directive.
+- **Flagged By**: Integration Lead
+- **Confidence**: High
+
+- **Decided**: Live verification recorded — `pnpm test` 8/8 passing (AppState init/update, UploadForm UI + .gpx filter, SettingsPanel defaults + slider updates), `pnpm check` (astro check) 0 errors / 0 warnings across 15 files, `pnpm build` produces a working standalone Node server, `HOST=0.0.0.0 node dist/server/entry.mjs` serves `GET /` with a full SSR-rendered page including all islands and Tailwind output.
+- **Why**: Phase 5 acceptance criteria are met.
+- **Rejected**: n/a
+- **Flagged By**: Integration Lead
+- **Confidence**: High
