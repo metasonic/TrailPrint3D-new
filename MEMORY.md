@@ -365,3 +365,46 @@ that surface during Phase 4.
 - **Rejected**: n/a
 - **Flagged By**: Integration Lead
 - **Confidence**: High.
+
+### Phase 8 - Docker packaging, nginx + brotli, full stack live
+
+- **Decided**: Five services in `docker-compose.yml` (`redis`, `backend`, `worker`, `frontend`, `nginx`) plus an opt-in `flower` behind a Compose profile. Backend and worker share a single image (`trailprint3d-backend:0.1.0`) with the worker's `command` overridden to launch Celery; saves one image and avoids drift. Public port is a single `nginx` listener (default :8080, overridable via `TP3D_PORT`).
+- **Why**: Brief mandates a Docker Compose stack with these services. Sharing the backend image keeps the worker's import graph identical to the API and proves "what the API can import, the worker can run".
+- **Rejected**: Separate Dockerfiles per service; nginx-less stack with CORS on FastAPI; per-service port exposure.
+- **Rejected Why**: Two near-identical backend images doubles surface area. CORS is a long tail of pitfalls when same-origin via a reverse proxy is essentially free. Multiple exposed ports complicates firewall rules.
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
+
+- **Decided**: nginx is custom-built with `ngx_brotli` as dynamic modules. Multi-stage `docker/nginx.Dockerfile` compiles brotli's C library via CMake (it's a submodule of `ngx_brotli` and isn't pre-built), then compiles the nginx module against the official nginx 1.27.3 source, and ships only the `.so` files plus the runtime config into a clean `nginx:1.27.3` final image.
+- **Why**: User chose nginx with brotli. Official nginx images don't ship brotli; building from source pins the version and keeps the production image small (~280 MB total). The `nginx.conf` enables brotli for `text/*`, JS, JSON, WASM, SVG, and `model/gltf+json`; gzip is the fallback. GLB binaries skip compression (already binary).
+- **Rejected**: Community brotli images (drift / single-maintainer risk); building brotli statically into nginx (loses the ability to disable it).
+- **Rejected Why**: Self-build keeps us in control of pins; dynamic modules are the modern nginx pattern.
+- **Flagged By**: Integration Lead
+- **Confidence**: High. Verified live: `curl -H 'Accept-Encoding: br' /` returns `Content-Encoding: br`.
+
+- **Decided**: All three custom images use Debian-bookworm-slim bases (`python:3.11.10-slim-bookworm`, `node:22.22.3-bookworm-slim`, `nginx:1.27.3`) rather than `-alpine`. The frontend image grows to ~190 MB (vs ~50 MB alpine) but that's a one-time payment for build robustness.
+- **Why**: Alpine's `apk` repos require pre-existing TLS trust to install `ca-certificates`, which is a chicken-and-egg behind TLS-inspecting corporate proxies. Debian's GPG-signed-over-HTTP apt sidesteps this entirely and is friendlier across deployment environments.
+- **Rejected**: Alpine bases.
+- **Rejected Why**: Repeated chicken-and-egg failures during sandbox build; not worth the size win.
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
+
+- **Decided**: `docker/extra-cas/` is a drop-in directory each Dockerfile copies into `/usr/local/share/ca-certificates/extra/` before any network step, then runs `update-ca-certificates`. Empty in the committed tree (only `.gitkeep` + README), so production builds are a no-op; corporate / sandbox builds drop their proxy CA in and everything works.
+- **Why**: Lets the same Dockerfile work in clean and proxy-intercepted environments without code-level differences. No bespoke build flags or compose overrides needed.
+- **Rejected**: `--build-secret` flag; per-environment Dockerfile variants; baking sandbox CAs into the committed tree.
+- **Rejected Why**: Secrets-flag adds a script-level coupling; variants split the build surface; baking CAs ties the image to a single environment.
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
+
+- **Decided**: Four shell wrappers under `scripts/` for the Docker workflow: `build.sh`, `up.sh`, `down.sh`, `logs.sh`. Each is a one-liner over `docker compose ...` so the surface matches the brief's example names; `up.sh` prints the URL.
+- **Why**: Rule 8 — repeatable Docker commands belong in scripts.
+- **Rejected**: A Makefile; a single multi-subcommand script.
+- **Rejected Why**: Bash one-liners are clear and discoverable.
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
+
+- **Decided**: Live verification recorded — `scripts/build.sh` built all four images (backend ~384 MB, frontend ~192 MB, nginx ~72 MB; redis pulled from upstream). `scripts/up.sh` brought the five services up; all reported `running` within ~20 s. Through nginx on :8080: `GET /` returned 200 with `Content-Encoding: br`, `GET /api/v1/health` returned `{redis:true,celery:true}`, `POST /api/v1/preview` with `Cluj_Eco_Trail.gpx` enqueued a job, 8 polls of `/api/v1/jobs/{id}` reached `completed`, `GET /files/{id}.glb` returned 200 / model/gltf-binary / 6,981,224 bytes (byte-identical to the Phase 4 CLI preview output). Playwright then drove a real Chromium browser through the same flow against the Dockerized stack and rendered the model.
+- **Why**: Phase 8 acceptance criteria are met. All 8 phases of the brief are complete.
+- **Rejected**: n/a
+- **Flagged By**: Integration Lead
+- **Confidence**: High.

@@ -45,3 +45,6 @@ frontend/.vite/
 frontend/coverage/
 *.tsbuildinfo
 .pnpm-store/
+
+# Extra CA certs for corporate proxies (per-machine, see docker/extra-cas/README.md)
+docker/extra-cas/*.crt
