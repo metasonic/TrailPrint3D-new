@@ -19,20 +19,22 @@ import Canvas3D from "../components/Canvas3D.astro";
 </Layout>
 
 <script>
-  import { submitPreview, pollJob } from "../lib/api";
+  import { submitPreview, submitExport, pollJob } from "../lib/api";
   import { Viewer3D } from "../lib/viewer";
 
   // ── DOM refs ────────────────────────────────────────────────────────────
-  const form        = document.getElementById("generation-form")   as HTMLFormElement;
-  const gpxInput    = document.getElementById("gpx-file")          as HTMLInputElement;
-  const btnPreview  = document.getElementById("btn-preview")       as HTMLButtonElement;
-  const canvas      = document.getElementById("canvas-3d")         as HTMLCanvasElement;
-  const placeholder = document.getElementById("canvas-placeholder") as HTMLElement;
-  const overlay     = document.getElementById("progress-overlay")  as HTMLElement;
-  const bar         = document.getElementById("progress-bar")      as HTMLElement;
-  const phaseEl     = document.getElementById("progress-phase")    as HTMLElement;
-  const pctEl       = document.getElementById("progress-pct")      as HTMLElement;
-  const errorToast  = document.getElementById("error-toast")       as HTMLElement;
+  const form          = document.getElementById("generation-form")    as HTMLFormElement;
+  const gpxInput      = document.getElementById("gpx-file")          as HTMLInputElement;
+  const btnPreview    = document.getElementById("btn-preview")        as HTMLButtonElement;
+  const btnExport     = document.getElementById("btn-export")         as HTMLButtonElement;
+  const exportFormat  = document.getElementById("export-format")      as HTMLSelectElement;
+  const canvas        = document.getElementById("canvas-3d")          as HTMLCanvasElement;
+  const placeholder   = document.getElementById("canvas-placeholder") as HTMLElement;
+  const overlay       = document.getElementById("progress-overlay")   as HTMLElement;
+  const bar           = document.getElementById("progress-bar")       as HTMLElement;
+  const phaseEl       = document.getElementById("progress-phase")     as HTMLElement;
+  const pctEl         = document.getElementById("progress-pct")       as HTMLElement;
+  const errorToast    = document.getElementById("error-toast")        as HTMLElement;
 
   // ── State ───────────────────────────────────────────────────────────────
   let viewer:   Viewer3D | null = null;
@@ -137,4 +139,52 @@ import Canvas3D from "../components/Canvas3D.astro";
       btnPreview.disabled = false;
     }
   });
+
+  // ── Export flow ──────────────────────────────────────────────────────────
+  btnExport.addEventListener("click", async () => {
+    if (!gpxFile) {
+      showError("Please select a GPX file first.");
+      return;
+    }
+
+    const fmt = exportFormat.value || "stl";
+    btnExport.disabled  = true;
+    btnPreview.disabled = true;
+    showProgress(`Preparing ${fmt.toUpperCase()} export…`, 0);
+
+    try {
+      const { job_id } = await submitExport(gpxFile, readSettings(), fmt);
+
+      const result = await pollJob(job_id, (status) => {
+        const label =
+          status.status === "pending" ? "Queued…" : `Exporting ${fmt.toUpperCase()}…`;
+        showProgress(label, status.progress);
+      });
+
+      if (result.result_url) {
+        showProgress("Downloading…", 100);
+        triggerDownload(result.result_url, `terrain.${fmt}`);
+      }
+
+      hideProgress();
+    } catch (err) {
+      hideProgress();
+      showError(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      btnExport.disabled  = false;
+      btnPreview.disabled = false;
+    }
+  });
+
+  // ── Download helper ───────────────────────────────────────────────────────
+  function triggerDownload(url: string, filename: string) {
+    const a = document.createElement("a");
+    a.href     = url;
+    a.download = filename;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    // Small delay before removal so the browser registers the click
+    setTimeout(() => document.body.removeChild(a), 100);
+  }
 </script>
