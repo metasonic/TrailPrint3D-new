@@ -14,5 +14,19 @@ export default defineConfig({
   },
   vite: {
     plugins: [tailwindcss()],
+    server: {
+      // Phase 6 dev proxy: keep the frontend same-origin against /api and /files.
+      // Production routing is Phase 8 (reverse proxy in docker-compose).
+      proxy: {
+        "/api": {
+          target: "http://127.0.0.1:8000",
+          changeOrigin: true,
+        },
+        "/files": {
+          target: "http://127.0.0.1:8000",
+          changeOrigin: true,
+        },
+      },
+    },
   },
 });

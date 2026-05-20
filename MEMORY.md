@@ -300,3 +300,39 @@ that surface during Phase 4.
 - **Rejected**: n/a
 - **Flagged By**: Integration Lead
 - **Confidence**: High
+
+### Phase 6 - Preview integration wired and live-verified
+
+- **Decided**: Frontend calls relative same-origin paths (`/api/v1/...`, `/files/...`). Astro's Vite dev server proxies both prefixes to `http://127.0.0.1:8000` (configured in `astro.config.mjs`). Production routing is deferred to Phase 8 (reverse proxy in Docker Compose).
+- **Why**: Same-origin everywhere means no CORS middleware in the backend, no cross-origin cookies/auth concerns later, and the frontend code is identical in dev and prod. The dev-only Vite proxy mirrors what a Phase 8 reverse proxy will do.
+- **Rejected**: Adding `CORSMiddleware` to FastAPI; baking a `PUBLIC_API_BASE_URL` env var into the frontend; serving the frontend bundle from FastAPI.
+- **Rejected Why**: CORS introduces an attack surface and configuration burden we don't need. A separate API base URL splits dev and prod paths and complicates testing. Serving the frontend from FastAPI defeats the separate-container deploy in the brief.
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
+
+- **Decided**: A single API client module at `frontend/src/api/client.ts` exposes `postPreview`, `postExport`, `getJob`, and `pollJob`. Polling cadence is 1 s (per the agreed simple-polling design). `pollJob` accepts an `AbortSignal`; the shell cancels any in-flight poll before starting a new one (no race between the previous completion and the new request).
+- **Why**: One place to evolve the network layer (e.g. swap to SSE/WebSocket later). The signal-based cancellation is the standard web-platform idiom.
+- **Rejected**: WebSocket / SSE for job updates; embedding fetch calls inline in components.
+- **Rejected Why**: Brief implies polling; WS/SSE adds a server-side dependency without user-visible benefit at this size. Inline fetches scatter retry/cancellation logic.
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
+
+- **Decided**: `AppShell` exposes one generator: `generatePreview(file)` is called from both `handleUpload` (after a drop) and `handleRegenerate` (after settings change). On upload the preview kicks off automatically with default settings — matching the brief: "preview uses default settings immediately after upload".
+- **Why**: One code path, one place where state transitions and abort signalling live. The brief's "auto-generate on upload" behaviour falls out for free.
+- **Rejected**: Asking the user to click a button after upload; making `handleUpload` do nothing until the user touches Regenerate.
+- **Rejected Why**: Contradicts the brief.
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
+
+- **Decided**: `scripts/dev-up.sh` now also starts the Astro dev server (background, logs to `.dev-logs/frontend.log`, PID tracked in `/tmp/tp3d.pids`). Pass `NO_FRONTEND=1` to skip it (the backend-only mode used by `curl-smoke.sh`).
+- **Why**: Local end-to-end verification needs all four processes up. Single command, single teardown.
+- **Rejected**: A second `scripts/dev-up-all.sh`; running the frontend manually in a foreground tab.
+- **Rejected Why**: Two scripts to remember; manual setup is not reproducible.
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
+
+- **Decided**: Live verification recorded — booted the full stack via `scripts/dev-up.sh`, drove a real Chromium browser via Playwright to drop `Cluj_Eco_Trail.gpx` into the upload form, observed `POST /api/v1/preview` → 7 polls of `/jobs/{id}` → `GET /files/{id}.glb` all returning 200, with the terrain + hexagonal frame + red track visible in the canvas and the status badge transitioning pending → processing → "Ready". 14/14 vitest passing, astro check 0/0/0 across 17 files.
+- **Why**: Phase 6 acceptance criteria are met.
+- **Rejected**: n/a
+- **Flagged By**: Integration Lead
+- **Confidence**: High.

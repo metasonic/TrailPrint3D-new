@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Boot Redis + FastAPI + Celery worker locally for ad-hoc curl testing.
-# All three run as background processes; PIDs go in /tmp/tp3d.pids.
+# Boot Redis + FastAPI + Celery worker + Astro dev server locally.
+# All four run as background processes; PIDs go in /tmp/tp3d.pids.
 # Use scripts/dev-down.sh to stop them.
+#
+# Pass NO_FRONTEND=1 to skip the Astro dev server (for backend-only smoke tests).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -29,6 +31,12 @@ poetry run celery -A backend.app.celery_app.celery_app worker \
     --loglevel=info --pool=solo \
     >".dev-logs/worker.log" 2>&1 &
 echo "worker $!" >> /tmp/tp3d.pids
+
+if [[ "${NO_FRONTEND:-0}" != "1" ]]; then
+    echo "[dev-up] starting Astro dev server on 127.0.0.1:4321 (proxies /api + /files to :8000)"
+    (cd frontend && pnpm dev --host 127.0.0.1 --port 4321) >".dev-logs/frontend.log" 2>&1 &
+    echo "frontend $!" >> /tmp/tp3d.pids
+fi
 
 sleep 1
 echo "[dev-up] done. Logs in .dev-logs/. Stop with scripts/dev-down.sh"
