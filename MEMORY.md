@@ -423,3 +423,4 @@ showPlaceholder(show: boolean): void
 - [x] Phase 6: Preview Integration
 - [x] Phase 7: Export Integration
 - [x] Phase 8: Docker Packaging
+- [x] Post-ship: Blender pinned to 4.5.9 LTS, .env.example created

@@ -12,8 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         curl xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Blender (TrailPrint3D requires >= 4.5.0) ─────────────────────────────────
-ARG BLENDER_VERSION=4.5.0
+# ── Blender (TrailPrint3D requires >= 4.5.0; use 4.5 LTS for API stability) ──
+ARG BLENDER_VERSION=4.5.9
 ARG BLENDER_MAJOR=4.5
 RUN curl -fL \
       "https://download.blender.org/release/Blender${BLENDER_MAJOR}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
