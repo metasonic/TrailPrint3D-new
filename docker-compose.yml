@@ -1,0 +1,107 @@
+# TrailPrint3D self-hosted stack. `docker compose up --build` brings up the
+# six services described in MEMORY.md Phase 8. Public port is configurable
+# via TP3D_PORT (defaults to 8080 so we don't need root for :80).
+
+services:
+  redis:
+    image: redis:7.4.1-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - redis_data:/data
+
+  backend:
+    image: trailprint3d-backend:0.1.0
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      OUTPUT_DIR: /app/output
+      ELEVATION_CACHE_DIR: /app/elevation_cache
+      MAX_UPLOAD_SIZE_MB: "10"
+      DEM_RESOLUTION: "30"
+      MAX_DEM_DOWNLOAD_MB: "100"
+      PREVIEW_TIMEOUT_SECONDS: "60"
+      EXPORT_TIMEOUT_SECONDS: "300"
+      CELERY_WORKER_CONCURRENCY: "4"
+    volumes:
+      - output_data:/app/output
+      - elevation_cache:/app/elevation_cache
+    expose:
+      - "8000"
+
+  worker:
+    image: trailprint3d-backend:0.1.0
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    restart: unless-stopped
+    command: ["celery", "-A", "backend.app.celery_app.celery_app", "worker", "--loglevel=info", "--concurrency=4"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      OUTPUT_DIR: /app/output
+      ELEVATION_CACHE_DIR: /app/elevation_cache
+      DEM_RESOLUTION: "30"
+      MAX_DEM_DOWNLOAD_MB: "100"
+      PREVIEW_TIMEOUT_SECONDS: "60"
+      EXPORT_TIMEOUT_SECONDS: "300"
+      CELERY_WORKER_CONCURRENCY: "4"
+    volumes:
+      - output_data:/app/output
+      - elevation_cache:/app/elevation_cache
+
+  frontend:
+    image: trailprint3d-frontend:0.1.0
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    restart: unless-stopped
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "4321"
+      NODE_ENV: production
+    expose:
+      - "4321"
+
+  nginx:
+    image: trailprint3d-nginx:0.1.0
+    build:
+      context: .
+      dockerfile: docker/nginx.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "${TP3D_PORT:-8080}:80"
+
+  # Optional Celery monitoring dashboard. Start with:
+  #   docker compose --profile flower up -d
+  flower:
+    image: mher/flower:2.0.1
+    profiles: ["flower"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      FLOWER_PORT: "5555"
+    ports:
+      - "${TP3D_FLOWER_PORT:-5555}:5555"
+
+volumes:
+  redis_data:
+  output_data:
+  elevation_cache:
