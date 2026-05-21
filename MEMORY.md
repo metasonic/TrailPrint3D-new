@@ -408,3 +408,51 @@ that surface during Phase 4.
 - **Rejected**: n/a
 - **Flagged By**: Integration Lead
 - **Confidence**: High.
+
+### Phase 8 follow-up #2 — Geometric layout rules (centring, buffer, shape sizing)
+
+User-driven refinement after seeing the rendered preview: the hexagon base appeared visibly smaller than the terrain (size mismatch), and there was no explicit "track sits inside, terrain extends past" buffer concept.
+
+- **Decided**: Introduce `pipeline/layout.py` with a single `ModelLayout` dataclass that owns every spatial parameter (UTM centre, mm-per-meter scale, z_scale, effective buffer in mm, the 2D shape polygon, and the DEM WGS84 bbox). `plan(projected_track, utm_crs, settings)` computes it once. All four downstream builders consume it: `terrain.build_terrain_mesh`, `frame.build_frame`, `frame.build_clip_volume`, and `track.build_track_tube`. The terrain's clip step and the visible frame both `extrude_polygon` the **same** `shape_polygon_mm` instance — that is structurally why they can no longer drift in size.
+- **Why**: Closes the bug class that produced the first visual mismatch. Also closes the "what is `centre_x` vs `utm_centre`" footgun that caused the earlier 50-km off-origin bug — there's now only one centre, in one struct.
+- **Rejected**: Continuing to pass loose `xy_scale` / `z_scale` / centre tuples around; storing them in `mesh.metadata` (Pythonic but discoverable only by hunting through string keys).
+- **Rejected Why**: Both reproduce the original divergence problem. The struct makes coupling explicit.
+- **Flagged By**: User (visual review)
+- **Confidence**: High.
+
+- **Decided**: Centring rule is now explicit: the **track's 2D bbox centroid** lands at the model origin (X=0, Y=0). The terrain mesh is translated by `-layout.utm_centre` (in UTM meters) before scaling, so the track sits in the middle even when the DEM tile extends asymmetrically around it.
+- **Why**: Matches the user-stated rule "aligning the 2D bounding-box centroid of the loaded track(s) with the geometric center of the selected base shape". The prior centring on the DEM AABB centroid drifted whenever the DEM crop wasn't symmetric.
+- **Rejected**: Centring on DEM AABB centroid (previous behaviour); centring on the geometric centroid of the track polyline (would give weird-looking offsets for tracks that loop back on themselves).
+- **Rejected Why**: DEM-AABB is the bug we fixed. Polyline centroid is sensitive to point density and is non-intuitive.
+- **Flagged By**: User
+- **Confidence**: High.
+
+- **Decided**: Buffer field added to `GenerateSettings` with two modes — `percent` (default, value=5, min-clamp 2 mm) and `absolute` (value=3 mm). In percent mode the buffer is `max(model_size_mm * buffer_percent/100, buffer_min_mm)`. The buffer is applied symmetrically to the track bbox on all four sides before shape sizing.
+- **Why**: User-stated rule. The min-clamp ensures small/short tracks still get a printable border. Two modes give power-users absolute control without losing the percentage shortcut.
+- **Rejected**: A single absolute mm field with no percent mode (less intuitive for varying track sizes); a single percent with no min clamp (a 100 m hike would get a 0.5 mm buffer — fragile to print).
+- **Rejected Why**: Both fail at the extremes of the size range.
+- **Flagged By**: User
+- **Confidence**: High.
+
+- **Decided**: Shape-specific sizing rules implemented in `pipeline/layout._shape_polygon`:
+    - **square**: rectangle matching the buffered track bbox (aspect ratio preserved; "square" is a misnomer when the track itself isn't square, but the user's spec is explicit).
+    - **circle**: diameter = diagonal of the buffered bbox (circle circumscribes it).
+    - **hexagon**: regular hex circumscribing the buffered bbox; `hexagon_orientation: flat_top | point_top` selects which vertex pattern. Default flat-top.
+- **Why**: Matches the user-stated shape-specific rules.
+- **Rejected**: An equal-sided "square" regardless of track aspect (previous behaviour).
+- **Rejected Why**: User spec called for "aspect ratio matches the buffered track bounds" for the square/rectangle shape.
+- **Flagged By**: User
+- **Confidence**: High.
+
+- **Decided**: The frontend Settings panel's "BBOX PADDING" slider was replaced with "BUFFER" (0–50 %, default 5). `bbox_padding_percent` stays in the schema as an internal DEM safety margin (0.1 default), not exposed in the Phase 1 UI.
+- **Why**: One slider per user-visible concept. The DEM safety margin is a backend detail; users don't need a knob for it.
+- **Rejected**: Keep both sliders (confusing); fold them into one combined knob (loses meaning).
+- **Rejected Why**: The fields control different things and should remain separate at the API.
+- **Flagged By**: Integration Lead
+- **Confidence**: High.
+
+- **Decided**: Live verification recorded — rebuilt the Docker stack, drove Chromium via Playwright through upload → preview. The rendered model shows a single hexagonal silhouette from frame base through terrain top (no mismatched outline), the trail traces well within the boundary with visible buffer space on all sides, and the layout numbers (`shape_extent_mm` = 127×110 for Cluj at default settings) match the closed-form prediction from the track bbox + buffer + hex circumscription rules.
+- **Why**: Layout refactor acceptance criteria met.
+- **Rejected**: n/a
+- **Flagged By**: Integration Lead
+- **Confidence**: High.

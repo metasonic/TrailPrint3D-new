@@ -26,10 +26,10 @@ describe("SettingsPanel", () => {
     expect(slider.value).toBe("2.5");
   });
 
-  it("uses the locked Phase 2 defaults", () => {
+  it("uses the locked defaults including the new buffer slider", () => {
     renderPanel();
     expect(screen.getByLabelText(/frame thickness/i)).toHaveValue(5);
-    expect(screen.getByLabelText(/bbox padding/i)).toHaveValue("10");
+    expect(screen.getByLabelText(/buffer/i)).toHaveValue("5");
     expect(screen.getByLabelText(/track thickness/i)).toHaveValue("1.2");
   });
 });

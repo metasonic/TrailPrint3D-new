@@ -17,6 +17,8 @@ import trimesh
 from pyproj import CRS, Transformer
 from shapely.geometry import Point
 
+from pipeline.layout import ModelLayout
+
 BBoxWGS84 = tuple[float, float, float, float]  # min_lon, min_lat, max_lon, max_lat
 
 
@@ -100,9 +102,8 @@ def _cast_track_onto_mesh(projected_track: np.ndarray, terrain: trimesh.Trimesh)
 def build_track_tube(
     projected_track: np.ndarray,
     terrain_mesh: trimesh.Trimesh,
+    layout: ModelLayout,
     diameter_mm: float,
-    xy_scale: float,
-    z_scale: float,
     segments: int = 12,
 ) -> trimesh.Trimesh:
     """Sweep a circular cross-section along the path. Watertight by construction.
@@ -114,23 +115,20 @@ def build_track_tube(
     Args:
         projected_track: Nx3 UTM coordinates in meters (pre-scale).
         terrain_mesh: the already-scaled terrain, used to cast Z onto.
+        layout: spatial layout (provides UTM centre + scale).
         diameter_mm: tube outer diameter in the final model's mm.
-        xy_scale: factor that maps UTM meters to model mm in XY.
-        z_scale: factor applied to elevation (matches terrain's vertical scale).
         segments: cross-section segment count (default 12 = clean circle, low poly).
     """
     if len(projected_track) < 2:
         raise ValueError("Track needs at least 2 points to extrude a tube")
 
-    # Terrain was first translated by -utm_centre (in UTM meters), then scaled
-    # by xy_scale. The track must follow the same order: shift in UTM meters,
-    # then scale — otherwise the track lands tens of km off origin while the
-    # terrain sits at the origin in mm space.
-    utm_centre_x, utm_centre_y = terrain_mesh.metadata.get("utm_centre", (0.0, 0.0))
+    # Shift to track centroid (UTM meters), then scale to mm. Same order as
+    # the terrain mesh — that's how they stay aligned.
+    utm_centre_x, utm_centre_y = layout.utm_centre
     scaled = projected_track.copy()
-    scaled[:, 0] = (scaled[:, 0] - utm_centre_x) * xy_scale
-    scaled[:, 1] = (scaled[:, 1] - utm_centre_y) * xy_scale
-    scaled[:, 2] *= z_scale
+    scaled[:, 0] = (scaled[:, 0] - utm_centre_x) * layout.scale
+    scaled[:, 1] = (scaled[:, 1] - utm_centre_y) * layout.scale
+    scaled[:, 2] *= layout.z_scale
     snapped = _cast_track_onto_mesh(scaled, terrain_mesh)
     snapped[:, 2] += diameter_mm * 0.5  # lift slightly so the union doesn't z-fight
 

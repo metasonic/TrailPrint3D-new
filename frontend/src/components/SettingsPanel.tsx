@@ -79,13 +79,13 @@ export function SettingsPanel({ onRegenerate, disabled }: Props) {
       />
 
       <Slider
-        label="Bbox padding"
+        label="Buffer"
         unit="%"
         min={0}
         max={50}
         step={1}
-        value={Math.round(settings.bbox_padding_percent * 100)}
-        onChange={(v) => setSetting("bbox_padding_percent", v / 100)}
+        value={settings.buffer_percent}
+        onChange={(v) => setSetting("buffer_percent", v)}
       />
 
       <label className="flex flex-col gap-1">

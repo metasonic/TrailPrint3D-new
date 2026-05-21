@@ -19,6 +19,7 @@ from pyproj import CRS, Transformer
 from rasterio.transform import Affine
 
 from backend.app.settings import settings
+from pipeline.layout import ModelLayout
 from pipeline.track import BBoxWGS84
 
 logger = logging.getLogger(__name__)
@@ -75,26 +76,24 @@ def build_terrain_mesh(
     transform: Affine,
     src_crs: CRS,
     target_crs: CRS,
+    layout: ModelLayout,
     subdivisions: int,
-    scale: float,
-    base_thickness: float,
-    model_size_mm: float,
+    base_thickness_mm: float,
 ) -> trimesh.Trimesh:
     """Reproject the DEM into target_crs, build a watertight terrain plate.
+
+    The mesh is translated so that `layout.utm_centre` lands at the model
+    origin (X=0, Y=0), then scaled by `layout.scale`. The base sits at z=0
+    after translation, and elevations are stretched by `layout.z_scale`.
 
     Args:
         dem: 2D elevation array in metres.
         transform: rasterio Affine; maps array (col, row) → src_crs coords.
         src_crs: input CRS (EPSG:4326 for SRTM).
         target_crs: output CRS (a local UTM zone for metric XY).
-        subdivisions: downsampling stride; 1 = full DEM resolution, 4 = every 4th sample.
-        scale: vertical exaggeration factor applied to elevation.
-        base_thickness: thickness of the flat base added below min(z), in pre-scale meters
-            (will be scaled to mm alongside everything else).
-        model_size_mm: longest XY edge of the final mesh, in millimetres.
-
-    The resulting mesh is centred at XY=(0,0) with its base at Z=0. The same
-    XY scale factor is recorded in `mesh.metadata` so the track tube can match.
+        layout: spatial layout describing centring and scale.
+        subdivisions: downsampling stride; 1 = full DEM resolution.
+        base_thickness_mm: thickness of the flat base below min(z), in mm.
     """
     # 1. Downsample
     stride = max(1, subdivisions)
@@ -109,54 +108,43 @@ def build_terrain_mesh(
     src_x = np.asarray(src_x, dtype=np.float64)
     src_y = np.asarray(src_y, dtype=np.float64)
 
-    # 3. Reproject to UTM
+    # 3. Reproject to UTM (still in metres).
     transformer = Transformer.from_crs(src_crs, target_crs, always_xy=True)
     east, north = transformer.transform(src_x, src_y)
 
-    # 4. Apply vertical scale
-    z = sampled * scale
+    # 4. Translate so the TRACK centroid (not the DEM AABB centroid) lands at
+    # the model origin, then convert everything to mm via layout.scale.
+    cx, cy = layout.utm_centre
+    east_mm = (np.asarray(east) - cx) * layout.scale
+    north_mm = (np.asarray(north) - cy) * layout.scale
+    z_mm = sampled * layout.z_scale
 
-    # 5. Build top-surface vertices and a regular grid triangulation
-    top = np.stack([east.ravel(), north.ravel(), z.ravel()], axis=1)
+    # 5. Build top-surface vertices and a regular grid triangulation.
+    top = np.stack([east_mm.ravel(), north_mm.ravel(), z_mm.ravel()], axis=1)
     faces_top = _grid_faces(rows, cols, flip=False)
 
-    # 6. Bottom plane at min(z) - base_thickness, same XY
-    z_bottom = float(z.min()) - base_thickness
+    # 6. Drop a flat base `base_thickness_mm` below min(z), in mm.
+    z_bottom = float(z_mm.min()) - base_thickness_mm
     bottom = top.copy()
     bottom[:, 2] = z_bottom
     faces_bottom = _grid_faces(rows, cols, flip=True) + len(top)
 
-    # 7. Side walls: stitch the four boundary edges between top and bottom rings
+    # 7. Side walls.
     n = len(top)
     side_faces = _side_wall_faces(rows, cols, top_offset=0, bottom_offset=n)
 
     vertices = np.vstack([top, bottom])
     faces = np.vstack([faces_top, faces_bottom, side_faces])
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=True)
-    # Our hand-rolled winding is globally inverted relative to trimesh's outward
+    # Hand-rolled winding is globally inverted relative to trimesh's outward
     # convention; fix_normals reorients faces so outward normals point outward.
     mesh.fix_normals()
     if not mesh.is_volume:
         raise RuntimeError("terrain mesh is not a valid volume after construction")
 
-    # 8. Centre at (0,0) in XY, base at Z=0
-    centre_x = float(0.5 * (mesh.bounds[0, 0] + mesh.bounds[1, 0]))
-    centre_y = float(0.5 * (mesh.bounds[0, 1] + mesh.bounds[1, 1]))
-    mesh.apply_translation(np.array([-centre_x, -centre_y, -float(mesh.bounds[0, 2])]))
+    # 8. Lift the whole mesh so its base sits at z=0 (the frame mesh's top).
+    mesh.apply_translation(np.array([0.0, 0.0, -float(mesh.bounds[0, 2])]))
 
-    # 9. Scale uniformly so longest XY edge = model_size_mm
-    xy_extent = max(mesh.extents[0], mesh.extents[1])
-    if xy_extent <= 0:
-        raise RuntimeError("Terrain mesh has zero XY extent")
-    factor = model_size_mm / xy_extent
-    mesh.apply_scale(float(factor))  # type: ignore[no-untyped-call]
-
-    # Record metadata the track extruder needs
-    mesh.metadata["xy_scale"] = factor
-    mesh.metadata["z_scale"] = factor * scale  # combined factor for the same elevation samples
-    mesh.metadata["utm_centre"] = (centre_x, centre_y)
-    mesh.metadata["centre_x"] = 0.0  # already centred
-    mesh.metadata["centre_y"] = 0.0
     return mesh
 
 

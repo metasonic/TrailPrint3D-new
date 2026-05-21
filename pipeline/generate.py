@@ -8,6 +8,7 @@ from pathlib import Path
 
 from backend.app.models import ExportFormat, GenerateMode, GenerateResult, GenerateSettings
 from pipeline import assembly, export, frame, terrain, track
+from pipeline.layout import plan
 
 logger = logging.getLogger(__name__)
 
@@ -19,44 +20,52 @@ def generate(
     mode: GenerateMode,
     export_format: ExportFormat,
 ) -> GenerateResult:
-    """Run the full pipeline. See docs/phase2_pipeline_design.md for the contract.
+    """Run the full pipeline.
 
-    Geometry decisions (logged in MEMORY.md, Phase 4 entry):
-      1. Terrain is built oversized over the DEM bbox, then INTERSECTED with a
-         vertical prism in the chosen frame shape. This makes the `shape`
-         parameter visually meaningful instead of letting the terrain corners
-         poke past the frame outline.
-      2. Track points are cast onto the DEM surface (matches the original
-         addon's `overwrite_path_elevation=True` default).
+    Spatial rules (single source of truth: pipeline/layout.py):
+      1. Track bbox centroid lands at the model origin.
+      2. Terrain extends past the track bbox by the configured buffer on all
+         sides (percent of model_size_mm with a min clamp, or absolute mm).
+      3. The base shape (square/circle/hexagon) circumscribes the buffered
+         track bbox per the shape-specific rules in layout._shape_polygon.
+      4. The clipped terrain, the visible base frame, and the boolean clip
+         volume all extrude the *same* shapely polygon — no drift possible.
+      5. Track points are cast onto the DEM surface (overwriting GPX
+         elevations) so the tube hugs the relief.
     """
     t0 = time.perf_counter()
 
-    # 1. Track
+    # 1. Load and project the track.
     parsed = track.load_track(gpx_path)
     utm_crs = track.pick_utm_crs(parsed)
     projected = track.project_to_utm(parsed, utm_crs)
-    bbox = track.compute_bbox(parsed, padding=settings.bbox_padding_percent)
 
-    # 2. DEM
-    dem_array, dem_transform, dem_crs, cache_hit = terrain.fetch_dem(bbox)
+    # 2. Plan the whole geometry in one go.
+    layout = plan(projected, utm_crs, settings)
+    logger.info(
+        "layout: scale=%.6f mm/m, buffer=%.2fmm, shape_extent=%.2fx%.2fmm, dem_bbox=%s",
+        layout.scale,
+        layout.buffer_mm,
+        *layout.shape_extent_mm,
+        layout.dem_bbox_wgs84,
+    )
 
-    # 3. Terrain mesh (subdivisions vary by mode)
+    # 3. Download DEM for the planned bbox.
+    dem_array, dem_transform, dem_crs, cache_hit = terrain.fetch_dem(layout.dem_bbox_wgs84)
+
+    # 4. Build the terrain mesh (centred on track centroid, scaled to mm).
     subdivisions = (
         settings.preview_subdivisions if mode == "preview" else settings.export_subdivisions
     )
-    # subdivisions is a "downsampling stride": preview uses a larger stride.
-    # The schema's "preview=2 / export=4" maps inversely (preview coarser, export finer):
-    # invert it here so a higher field value → finer detail.
     stride = max(1, 8 // subdivisions)
     terrain_mesh = terrain.build_terrain_mesh(
         dem=dem_array,
         transform=dem_transform,
         src_crs=dem_crs,
         target_crs=utm_crs,
+        layout=layout,
         subdivisions=stride,
-        scale=settings.terrain_scale,
-        base_thickness=settings.min_base_thickness_mm,
-        model_size_mm=settings.model_size_mm,
+        base_thickness_mm=settings.min_base_thickness_mm,
     )
     logger.info(
         "terrain mesh: %d verts, %d faces, bounds=%s",
@@ -65,36 +74,33 @@ def generate(
         terrain_mesh.bounds.tolist(),
     )
 
-    # 4. Clip terrain to the chosen frame outline
-    clip_volume = frame.build_clip_volume(settings.shape, terrain_mesh.bounds)
+    # 5. Clip the terrain to the shape polygon. Both the clip volume and the
+    # visible frame extrude the SAME polygon, so their XY footprints are
+    # bit-identical.
+    clip_volume = frame.build_clip_volume(
+        layout.shape_polygon_mm,
+        z_min=float(terrain_mesh.bounds[0, 2]),
+        z_max=float(terrain_mesh.bounds[1, 2]),
+    )
     clipped_terrain = assembly.intersect(terrain_mesh, clip_volume)
-    # Preserve metadata the track tube needs (xy_scale, centre)
-    clipped_terrain.metadata.update(terrain_mesh.metadata)
     logger.info(
         "clipped terrain: %d verts, %d faces",
         len(clipped_terrain.vertices),
         len(clipped_terrain.faces),
     )
 
-    # 5. Visible base frame, sized to match the clipped terrain
-    frame_mesh = frame.build_frame(
-        shape=settings.shape,
-        terrain_bounds=clipped_terrain.bounds,
-        thickness_mm=settings.frame_thickness_mm,
-    )
+    # 6. Visible base frame, beneath z=0.
+    frame_mesh = frame.build_frame(layout.shape_polygon_mm, settings.frame_thickness_mm)
 
-    # 6. Track tube (cast onto the clipped terrain)
-    xy_scale = float(clipped_terrain.metadata["xy_scale"])
-    z_scale = float(clipped_terrain.metadata["z_scale"])
+    # 7. Track tube, cast onto the clipped terrain surface.
     track_mesh = track.build_track_tube(
         projected_track=projected,
         terrain_mesh=clipped_terrain,
+        layout=layout,
         diameter_mm=settings.track_thickness_mm,
-        xy_scale=xy_scale,
-        z_scale=z_scale,
     )
 
-    # 7. Final union
+    # 8. Final union.
     assembled = assembly.union([clipped_terrain, frame_mesh, track_mesh])
     logger.info(
         "assembled: %d verts, %d faces, watertight=%s",
@@ -103,7 +109,7 @@ def generate(
         assembled.is_watertight,
     )
 
-    # 8. Export
+    # 9. Export.
     export.export_mesh(assembled, output_path, export_format)
 
     return GenerateResult(
@@ -114,5 +120,5 @@ def generate(
         cache_hit=cache_hit,
         track_length_m=parsed.length_m,
         elevation_gain_m=parsed.elevation_gain_m,
-        bbox=bbox,
+        bbox=layout.dem_bbox_wgs84,
     )
