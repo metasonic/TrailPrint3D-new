@@ -1,0 +1,39 @@
+FROM python:3.11-slim
+
+# Install system dependencies for headless Blender (bpy)
+RUN apt-get update && apt-get install -y \
+    libx11-6 \
+    libxrender1 \
+    libxxf86vm1 \
+    libxfixes3 \
+    libxi6 \
+    libxkbcommon0 \
+    libsm6 \
+    libgl1 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install uv for fast python package management
+RUN pip install uv
+
+# Install backend dependencies
+COPY backend /app/backend
+WORKDIR /app/backend
+RUN uv pip install --system -e .
+RUN uv pip install --system loguru python-multipart
+
+WORKDIR /app
+# Copy the original Blender Addon code so it's accessible to the backend runner
+COPY . /app/TrailPrint3D
+
+# Create data directories
+RUN mkdir -p /data/uploads /data/outputs
+
+# Set environment variables
+ENV UPLOAD_DIR=/data/uploads
+ENV OUTPUT_DIR=/data/outputs
+
+WORKDIR /app/backend
+# The entrypoint will be defined in docker-compose depending on if it's the web server or the worker
