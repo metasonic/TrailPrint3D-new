@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TrailPrint3D Web</title>
+    <style>
+        body { font-family: sans-serif; margin: 0; padding: 0; display: flex; height: 100vh; }
+        #sidebar { width: 350px; background: #f4f4f4; padding: 20px; overflow-y: auto; box-shadow: 2px 0 5px rgba(0,0,0,0.1); z-index: 10; }
+        #viewer-container { flex-grow: 1; position: relative; background: #e0e0e0; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; }
+        input, select, button { width: 100%; padding: 8px; box-sizing: border-box; }
+        input[type="checkbox"] { width: auto; display: inline-block; }
+        button { background: #007bff; color: white; border: none; cursor: pointer; margin-top: 10px; font-weight: bold; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        #status { margin-top: 15px; font-weight: bold; color: #333; }
+        #download-links { margin-top: 15px; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+<div id="sidebar">
+    <h2>TrailPrint3D</h2>
+
+    <div class="form-group">
+        <label for="gpxFile">1. Upload GPX File</label>
+        <input type="file" id="gpxFile" accept=".gpx">
+    </div>
+
+    <div class="form-group">
+        <label for="shape">2. Base Shape</label>
+        <select id="shape">
+            <option value="SQUARE">Square</option>
+            <option value="CIRCLE">Circle</option>
+            <option value="HEXAGON">Hexagon</option>
+            <option value="ELLIPSE">Ellipse</option>
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="objSize">Map Size (mm)</label>
+        <input type="number" id="objSize" value="100" min="50" max="300">
+    </div>
+
+    <div class="form-group">
+        <label for="scaleElevation">Elevation Exaggeration</label>
+        <input type="number" id="scaleElevation" value="1.5" step="0.1" min="0.1">
+    </div>
+
+    <div class="form-group">
+        <label for="minThickness">Base Thickness (mm)</label>
+        <input type="number" id="minThickness" value="2" min="1">
+    </div>
+
+
+    <div class="form-group">
+        <label>
+            <input type="checkbox" id="singleColorMode"> Single Color Mode
+        </label>
+    </div>
+
+    <div class="form-group">
+        <label>
+            <input type="checkbox" id="showWater"> Include Water
+        </label>
+    </div>
+
+    <div class="form-group">
+        <label>
+            <input type="checkbox" id="showRoads"> Include Roads
+        </label>
+    </div>
+
+
+    <button id="generateBtn" disabled>Update High-Res Generate</button>
+
+    <div id="status">Ready. Upload a GPX to instantly preview.</div>
+
+    <div id="download-links" class="hidden">
+        <h3>Downloads</h3>
+        <button id="downloadStl">Download STL</button>
+        <button id="downloadObj">Download OBJ</button>
+        <button id="download3mf">Download 3MF</button>
+    </div>
+</div>
+
+<div id="viewer-container">
+    <!-- Three.js canvas goes here -->
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+<script src="app.js"></script>
+
+</body>
+</html>

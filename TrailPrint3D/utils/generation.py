@@ -84,45 +84,45 @@ def _rg_validate_inputs(flags):
     _ot_api_key = get_prefs().openTopographyApiKey
     if api == "OPENTOPOGRAPHY" and not _ot_api_key:
         print("No OPENTOPOGRAPHY API key entered")
-        show_message_box(
+        raise ValueError(
             "OpenTopography requires an API key. "
             "Get a free key at portal.opentopography.org and set it in the addon preferences."
         )
-        return None
+
 
     if singleColorMode and elementMode == "SEPARATE":
-        show_message_box("Single Color Mode and Separate Element Mode cannot be used together. either disable Single-color Mode for the trail or switch to SingleColorMode for elements.")
-        return None
+        raise ValueError("Single Color Mode and Separate Element Mode cannot be used together. either disable Single-color Mode for the trail or switch to SingleColorMode for elements.")
+
 
     if "gpx_file" in flags:
         if not gpx_file_path or gpx_file_path == "":
-            show_message_box("File path is empty! Please select a valid file.")
-            return None
+            raise ValueError("File path is empty! Please select a valid file.")
+
         if not os.path.isfile(gpx_file_path):
-            show_message_box(f"Invalid file path: {gpx_file_path}. Please select a valid file.")
-            return None
+            raise ValueError(f"Invalid file path: {gpx_file_path}. Please select a valid file.")
+
         gpx_file_path = bpy.path.abspath(gpx_file_path)
         file_extension = os.path.splitext(gpx_file_path)[1].lower()
         if file_extension != '.gpx' and file_extension != ".igc":
-            show_message_box(f"Invalid file format. Please Use a .GPX file")
-            return None
+            raise ValueError(f"Invalid file format. Please Use a .GPX file")
+
     if "gpx_chain" in flags:
         if not gpx_chain_path or gpx_chain_path == "":
-            show_message_box("CHAIN path is empty! Please select a valid folder.")
-            return None
+            raise ValueError("CHAIN path is empty! Please select a valid folder.")
+
         gpx_chain_path = bpy.path.abspath(gpx_chain_path)
     if not exportPath:
         exportPath = addon_preferences.get_prefs().default_export_folder
     if not exportPath:
-        show_message_box("Export path cant be empty")
-        return None
+        raise ValueError("Export path cant be empty")
+
     exportPath = bpy.path.abspath(exportPath)
     if not exportPath or exportPath == "":
-        show_message_box("Export path is empty! Please select a valid folder.")
-        return None
+        raise ValueError("Export path is empty! Please select a valid folder.")
+
     if not os.path.isdir(exportPath):
-        show_message_box(f"Invalid export Directory: {exportPath}. Please select a valid Directory.")
-        return None
+        raise ValueError(f"Invalid export Directory: {exportPath}. Please select a valid Directory.")
+
 
     # --- Default font ---
     if textFont == "":
@@ -243,9 +243,9 @@ def _rg_load_coordinates(flags, props):
             separate_paths.append([(props['jMapLat1'], props['jMapLon1'], 0, 0)])
             separate_paths.append([(props['jMapLat2'], props['jMapLon2'], 0, 0)])
     except Exception as e:
-        #show_message_box(f"Something went Wrong reading the GPX. Type {type}")
+        #raise ValueError(f"Something went Wrong reading the GPX. Type {type}")
         _progress.WarningsOverlay.add_warning("Something went Wrong reading the GPX file", "error")
-        return None
+
 
     coordinates = [item for sublist in separate_paths for item in sublist]
 
@@ -1047,7 +1047,7 @@ def runGeneration(type, locked_scale=None):
             bpy.ops.object.join()
             curveObjs = [bpy.context.view_layer.objects.active]
     except Exception as e:
-        show_message_box("Bad Response from API while creating the curve. If this happens everytime contact dev")
+        raise ValueError("Bad Response from API while creating the curve. If this happens everytime contact dev")
         overlay.finish()
         return
 

@@ -24,7 +24,7 @@ def export_to_STL(zobj, force="STL"):
     bpy.context.view_layer.objects.active = zobj
 
     if zobj.material_slots and force != "STL":
-        bpy.ops.wm.obj_export(filepath=exportPath + zobj.name + ".obj",
+        bpy.ops.export_scene.obj(filepath=exportPath + zobj.name + ".obj",
             export_selected_objects=True,
             export_triangulated_mesh=True,
             apply_modifiers=True,
@@ -57,7 +57,7 @@ def export_selected_to_STL(force="STL"):
         bpy.context.view_layer.objects.active = zobj
 
         if (zobj.material_slots or force == "OBJ") and force != "STL":
-            bpy.ops.wm.obj_export(filepath=exportPath + zobj.name + ".obj",
+            bpy.ops.export_scene.obj(filepath=exportPath + zobj.name + ".obj",
                 export_selected_objects=True,
                 export_triangulated_mesh=True,
                 apply_modifiers=True,

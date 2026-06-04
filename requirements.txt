@@ -1,0 +1,5 @@
+bpy==5.0.1
+fastapi
+uvicorn
+python-multipart
+requests
